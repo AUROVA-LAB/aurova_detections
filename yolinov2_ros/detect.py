@@ -16,7 +16,7 @@ import numpy as np
 def callback(merged_in):
     global flag, bridge, merge_img_pub, model, test_transform, DEVICE
     if flag:
-        image = bridge.imgmsg_to_cv2(merged_in, "bgr8")
+        #image = bridge.imgmsg_to_cv2(merged_in, "bgr8")
         print("Image trnasformed ...")
         print(type(image))
         #image = np.array(bridge.imgmsg_to_cv2(merged_in))

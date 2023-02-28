@@ -134,7 +134,7 @@ def test_single_shot():
 
     id_val = sys.argv[2]
 
-    image = np.array(Image.open(PATH + "val/merged_" + str(id_val) + ".png").convert("RGB"))
+    image = np.array(Image.open(PATH + "train/merged_" + str(id_val) + ".png").convert("RGB"))
 
     with torch.inference_mode():
 

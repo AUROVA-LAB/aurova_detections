@@ -30,10 +30,10 @@ RUN cd /workspace/aurova_ws/src && /bin/bash -c "source /opt/ros/melodic/setup.b
 RUN cd /workspace/aurova_ws /bin/bash -c "source source /opt/ros/melodic/setup.bash; catkin_make"
 
 # Create package
-RUN cd /workspace/aurova_ws/src
+#RUN cd /workspace/aurova_ws/src
 RUN cd /workspace/aurova_ws/src && catkin_create_pkg yolinov2 --rosdistro melodic
 COPY ./* /workspace/aurova_ws/src/yolinov2/
-RUN cd /workspace/aurova_ws/src/yolinov2/ && chmod +x merge_channels_ouster.py
+RUN cd /workspace/aurova_ws/src/yolinov2/ && chmod +x detect.py
 
 RUN pip install rospkg
 
