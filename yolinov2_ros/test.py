@@ -136,20 +136,19 @@ def test_single_shot():
 
     image = np.array(Image.open(PATH + "train/merged_" + str(id_val) + ".png").convert("RGB"))
 
-    with torch.inference_mode():
+    #with torch.inference_mode():
+    image = test_transform(image=image)
+    image = image["image"]
 
-        image = test_transform(image=image)
-        image = image["image"]
+    image = image.to(DEVICE).unsqueeze(0)
+    pred = torch.sigmoid(model(image))
+    pred = (pred > 0.5).float()
 
-        image = image.to(DEVICE).unsqueeze(0)
-        pred = torch.sigmoid(model(image))
-        pred = (pred > 0.5).float()
-
-        torchvision.utils.save_image(
-          pred, PATH + "out/merged_" + str(id_val) + "_pred.png"
+    torchvision.utils.save_image(
+        pred, PATH + "out/merged_" + str(id_val) + "_pred.png"
       )
-        torchvision.utils.save_image(
-          image, PATH + "out/merged_" + str(id_val) + "_imag.png"
+    torchvision.utils.save_image(
+        image, PATH + "out/merged_" + str(id_val) + "_imag.png"
       )
 
 if __name__ == '__main__':

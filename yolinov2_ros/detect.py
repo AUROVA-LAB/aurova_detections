@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.7
+#!/usr/bin/env python3
 
 import message_filters
 import rospy
@@ -16,29 +16,22 @@ import numpy as np
 def callback(merged_in):
     global flag, bridge, merge_img_pub, model, test_transform, DEVICE
     if flag:
-        #image = bridge.imgmsg_to_cv2(merged_in, "bgr8")
-        print("Image trnasformed ...")
-        print(type(image))
-        #image = np.array(bridge.imgmsg_to_cv2(merged_in))
-        '''
-        with torch.inference_mode():
+        image = bridge.imgmsg_to_cv2(merged_in, "bgr8")
 
-            image = test_transform(image=image)
-            image = image["image"]
+        image = test_transform(image=image)
+        image = image["image"]
 
-            image = image.to(DEVICE).unsqueeze(0)
-            pred = torch.sigmoid(model(image))
-            pred = (pred > 0.5).float()
-            print("PREDICTION DONE ...")
-        '''
+        image = image.to(DEVICE).unsqueeze(0)
+        pred = torch.sigmoid(model(image))
+        pred = (pred > 0.5).float()
+
         flag=False
-        #detection = pred
-        #print("Leido")
-        #image_message = bridge.cv2_to_imgmsg(merged_in, "bgr8")
-        #image_message = detection
-        #image_message.header.stamp = merged_in.header.stamp
-        #image_message.header.frame_id = "os_sensor"
-        #detection_img_pub.publish(image_message)
+        detection = pred.cpu().detach().numpy()
+        final_mask = detection[0][0].astype(np.uint8)*255
+        image_message = bridge.cv2_to_imgmsg(final_mask, "mono8")
+        image_message.header.stamp = merged_in.header.stamp
+        image_message.header.frame_id = "os_sensor"
+        detection_img_pub.publish(image_message)
 
 
 
@@ -57,7 +50,7 @@ if __name__ == '__main__':
     PATH = "/docker_shared/yolinov2_shared/experiments/exp_2023-02-13/"
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
     n_epoch = 149
-    model = UnetPlusPlus("resnet18", "imagenet", in_channels=3, out_channels=1).to(DEVICE)
+    model = UnetPlusPlus("resnet18", None, in_channels=3, out_channels=1).to(DEVICE)
     load_checkpoint(torch.load(PATH + "epochs/checkpoint_epoch_" + str(n_epoch) + ".pth.tar"), model)
     test_transform = A.Compose(
         [
@@ -69,7 +62,7 @@ if __name__ == '__main__':
             ToTensorV2(),
         ]
     )
-    print("Network model loaded")
+    print(f"Network model loaded with {DEVICE}")
 
     r = rospy.Rate(20)
     while not rospy.is_shutdown():
