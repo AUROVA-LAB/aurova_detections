@@ -116,4 +116,12 @@ RUN cd ~/opencv/build/ && make install
 RUN cd ~/opencv/build/ && ldconfig
 RUN rm -rf ~/opencv*
 
-#CMD export PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python && cd ./../home/ignacio/ros_ws/ && /bin/bash -c "source devel/setup.bash; catkin_make; source devel/setup.bash; roslaunch yolov5_ros yolov5.launch"
+COPY ./dasiamrpn* /home/ros_ws/src/yolov5_ros/models/
+COPY ./best.pt /home/ros_ws/src/yolov5_ros/models/
+COPY ./tracker.launch /home/ros_ws/src/yolov5_ros/launch/
+COPY ./tracker.py /home/ros_ws/src/yolov5_ros/src/
+
+# # Make program executable
+RUN cd /home/ros_ws/src/yolov5_ros/src/ && chmod +x tracker.py
+
+CMD export PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python && cd /home/ros_ws/ && /bin/bash -c "source devel/setup.bash; catkin_make; source devel/setup.bash; roslaunch yolov5_ros tracker.launch"
