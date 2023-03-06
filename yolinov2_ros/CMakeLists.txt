@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.0.2)
-project(merge_channels_ouster)
+project(yolinov2)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
 # add_compile_options(-std=c++11)
@@ -11,7 +11,6 @@ find_package(catkin REQUIRED COMPONENTS
   rospy
   sensor_msgs
   std_msgs
-  detection_msgs
 )
 
 ## System dependencies are found with CMake's conventions
@@ -161,8 +160,12 @@ include_directories(
 ## Mark executable scripts (Python etc.) for installation
 ## in contrast to setup.py, you can choose the destination
 catkin_install_python(PROGRAMS
-  src/detect.py
-  src/merge_channels_ouster.py
+  dataset.py
+  train.py
+  utils.py
+  models.py
+  test.py
+  detect.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
@@ -206,7 +209,3 @@ catkin_install_python(PROGRAMS
 
 ## Add folders to be run by python nosetests
 # catkin_add_nosetests(test)
-Footer
-© 2023 GitHub, Inc.
-Footer navigation
-

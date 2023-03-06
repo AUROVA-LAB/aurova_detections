@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+<launch>
+
+    <node pkg="yolinov2" name="ground_lines_detection" type="detect.py" output="screen" ></node>
+
+</launch>

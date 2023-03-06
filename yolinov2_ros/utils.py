@@ -5,7 +5,7 @@ import torchvision
 from torch.utils.data import DataLoader
 from dataset import SegmentationDataset
 import pathlib
-import wandb
+#import wandb
 import time
 import numpy as np
 
