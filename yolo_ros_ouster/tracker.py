@@ -10,6 +10,7 @@ from pathlib import Path
 import os
 import sys
 from rostopic import get_topic_type
+from copy import copy
 
 from sensor_msgs.msg import Image, CompressedImage
 from detection_msgs.msg import BoundingBox, BoundingBoxes
@@ -123,6 +124,7 @@ class Yolov5Tracker:
         self.pred_pub = rospy.Publisher(
             rospy.get_param("~output_topic"), BoundingBoxes, queue_size=10
         )
+        
         # Initialize image publisher
         self.publish_image = rospy.get_param("~publish_image")
         if self.publish_image:
@@ -213,7 +215,7 @@ class Yolov5Tracker:
             self.tracker.init(frame, self.bbox_tracker)
             #draw bounding box
             if self.publish_image:
-                cv2.rectangle(self.im_output, (bbox.xmin, bbox.ymin), (bbox.xmax, bbox.ymax), (0,0,0), 2, 1)
+                self.draw_rectangles((0,0,0))
             break
 
     def search_target(self, im):
@@ -236,7 +238,7 @@ class Yolov5Tracker:
             self.tracker_mode=self.TRACKER_NORMAL; self.operation_mode=self.TRACK_MODE
             self.tracker_start=rospy.get_time()
             if self.publish_image:
-                cv2.rectangle(self.im_output, (self.bbox.xmin, self.bbox.ymin), (self.bbox.xmax, self.bbox.ymax), (0,255,0), 2, 1)
+                self.draw_rectangles((0,255,0))
             # Update descriptor
             self.target_descriptor=(self.target_descriptor+best_descriptor)/2
         elif rospy.get_time()-self.search_start>self.search_time: self.operation_mode=self.SELECT_TARGET_MODE
@@ -267,7 +269,7 @@ class Yolov5Tracker:
                 self.tracker.init(frame, self.bbox_tracker); self.prev_frame=frame
                 self.tracker_mode=self.TRACKER_NORMAL; self.tracker_start=rospy.get_time()
                 if self.publish_image:
-                    cv2.rectangle(self.im_output, (self.bbox.xmin, self.bbox.ymin), (self.bbox.xmax, self.bbox.ymax), (0,0,255), 2, 1)
+                    self.draw_rectangles((0,0,255))
                 # Update descriptor
                 self.target_descriptor=(self.target_descriptor+best_descriptor)/2
             else: self.operation_mode=self.SEARCH_MODE; self.search_start=rospy.get_time()
@@ -327,20 +329,20 @@ class Yolov5Tracker:
             # Draw bounding box
             self.prev_frame=frame
             if ok and self.publish_image:
-                self.draw_rectangles([self.bbox.xmin, self.bbox.ymin], [self.bbox.xmax, self.bbox.ymax])
+                self.draw_rectangles()
             
             end=rospy.get_time()
             self.track_t=end-start if self.track_t==0 else (self.track_t+end-start)/2
                
 
     def callback(self, data):
-        self.flag_image=True
         self.data = data
 
         if self.compressed_input:
             self.im = self.bridge.compressed_imgmsg_to_cv2(data, desired_encoding="bgra8")
         else:
             self.im = self.bridge.imgmsg_to_cv2(data, desired_encoding="bgra8")
+        self.flag_image=True
         
 
     def preprocess(self, img):
@@ -355,29 +357,35 @@ class Yolov5Tracker:
 
         return img, img0 
     
-    def draw_rectangles(self, p1,p2):
-        if p1[0]<0:
-            p3=p1.copy()
-            p1[0]+=2048
-            if p2[0]<0:
-                p2[0]+=2048
-                cv2.rectangle(self.im_output, p1, p2, (255,0,0), 2, 1)
+    def draw_rectangles(self, color=(255,0,0)):
+        self.bbox.ymin=max(0,self.bbox.ymin); self.bbox.ymax=min(self.img_size[1],self.bbox.ymax)
+        if self.bbox.xmin<0:
+            if self.bbox.xmax<0:
+                aux=copy(self.bbox); aux.xmin+=self.img_size[0]; aux.xmax+=self.img_size[0]
+                self.bounding_boxes.append(aux)
+                cv2.rectangle(self.im_output, (aux.xmin, aux.ymin), (aux.xmax, aux.ymax), color, 2, 1)
             else:
-                p4=p2.copy(); p2[0]=2048; p3[0]=0
-                cv2.rectangle(self.im_output, p1, p2, (255,0,0), 2, 1)
-                cv2.rectangle(self.im_output, p3, p4, (255,0,0), 2, 1)
-        elif p2[0]>2048:
-            p4=p2.copy()
-            p2[0]-=2048
-            if p1[0]>2048:
-                p1[0]-=2048
-                cv2.rectangle(self.im_output, p1, p2, (255,0,0), 2, 1)
+                aux=copy(self.bbox); aux.xmin+=self.img_size[0]; aux.xmax=self.img_size[0]
+                self.bounding_boxes.append(aux)
+                aux2=copy(self.bbox); aux2.xmin=0
+                self.bounding_boxes.append(aux2)
+                cv2.rectangle(self.im_output, (aux.xmin, aux.ymin), (aux.xmax, aux.ymax), color, 2, 1)
+                cv2.rectangle(self.im_output, (aux2.xmin, aux2.ymin), (aux2.xmax, aux2.ymax), color, 2, 1)
+        elif self.bbox.xmax>self.img_size[0]:
+            if self.bbox.xmin>self.img_size[0]:
+                aux=copy(self.bbox); aux.xmin-=self.img_size[0]; aux.xmax-=self.img_size[0]
+                self.bounding_boxes.append(aux)
+                cv2.rectangle(self.im_output, (aux.xmin, aux.ymin), (aux.xmax, aux.ymax), color, 2, 1)
             else:
-                p3=p1.copy(); p4[0]=2048; p1[0]=0
-                cv2.rectangle(self.im_output, p1, p2, (255,0,0), 2, 1)
-                cv2.rectangle(self.im_output, p3, p4, (255,0,0), 2, 1)
+                aux=copy(self.bbox); aux.xmin=0; aux.xmax-=self.img_size[0]
+                self.bounding_boxes.append(aux)
+                aux2=copy(self.bbox); aux2.xmax=self.img_size[0]
+                self.bounding_boxes.append(aux2)
+                cv2.rectangle(self.im_output, (aux.xmin, aux.ymin), (aux.xmax, aux.ymax), color, 2, 1)
+                cv2.rectangle(self.im_output, (aux2.xmin, aux2.ymin), (aux2.xmax, aux2.ymax), color, 2, 1)
         else:
-            cv2.rectangle(self.im_output, p1, p2, (255,0,0), 2, 1)
+            self.bounding_boxes.append(self.bbox)
+            cv2.rectangle(self.im_output, (self.bbox.xmin, self.bbox.ymin), (self.bbox.xmax, self.bbox.ymax), color, 2, 1)
 
     def segment_person(self, frame, bbox):
         segment_frame=frame[bbox.ymin:bbox.ymax, bbox.xmin:bbox.xmax]
@@ -482,6 +490,7 @@ def main_thread(node: Yolov5Tracker):
   while not rospy.is_shutdown():
     if node.flag_select: node.operation_mode=node.SELECT_TARGET_MODE; node.flag_select=False
     if node.flag_image:
+        node.bounding_boxes=[]
         node.flag_image=False
         if node.publish_image: node.im_output=node.im.copy()
         if node.operation_mode==node.SELECT_TARGET_MODE: node.select_target(node.im.copy())
@@ -492,7 +501,8 @@ def main_thread(node: Yolov5Tracker):
         bounding_boxes = BoundingBoxes()
         bounding_boxes.header = node.data.header
         bounding_boxes.image_header = node.data.header
-        bounding_boxes.bounding_boxes.append(node.bbox)
+        for bbox in node.bounding_boxes:
+            bounding_boxes.bounding_boxes.append(bbox) #Append the bounding boxes which are between the limits of the image.
         node.pred_pub.publish(bounding_boxes)
         if node.publish_image:
             node.image_pub.publish(node.bridge.cv2_to_imgmsg(node.im_output, "bgra8")) 
