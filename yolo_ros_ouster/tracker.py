@@ -14,7 +14,8 @@ from rostopic import get_topic_type
 from sensor_msgs.msg import Image, CompressedImage
 from detection_msgs.msg import BoundingBox, BoundingBoxes
 from threading import Thread
-import time
+import termios, tty
+
 
 
 # add yolov5 submodule to path
@@ -97,6 +98,9 @@ class Yolov5Tracker:
         self.SELECT_TARGET_MODE, self.SEARCH_MODE, self.TRACK_MODE = 0, 1, 2 #Global modes of the detector/tracker
         self.TRACKER_NORMAL, self.TRACKER_LEFT, self.TRACKER_RIGHT =  0, 1, 2 #Tracker modes for considering that the image is 360 degres.
         self.operation_mode=self.SELECT_TARGET_MODE
+
+        #Time measure
+        self.detect_t=0; self.track_t=0; self.search_t=0
 
         # start main thread
         self.thread = Thread(target = main_thread, args = (self, ))
@@ -213,6 +217,7 @@ class Yolov5Tracker:
             break
 
     def search_target(self, im):
+        start=rospy.get_time()
         best_corr=0
         bounding_boxes = self.detectYolo5v(im.copy())
         for bbox in bounding_boxes:
@@ -235,9 +240,12 @@ class Yolov5Tracker:
             # Update descriptor
             self.target_descriptor=(self.target_descriptor+best_descriptor)/2
         elif rospy.get_time()-self.search_start>self.search_time: self.operation_mode=self.SELECT_TARGET_MODE
+        end=rospy.get_time()
+        self.search_t=end-start if self.search_t==0 else (self.search_t+end-start)/2
 
     def track_target(self, im):
         if rospy.get_time()-self.tracker_start>self.detect_period:
+            start=rospy.get_time()
             best_corr=0
             bounding_boxes = self.detectYolo5v(im.copy())
             for bbox in bounding_boxes:
@@ -263,7 +271,11 @@ class Yolov5Tracker:
                 # Update descriptor
                 self.target_descriptor=(self.target_descriptor+best_descriptor)/2
             else: self.operation_mode=self.SEARCH_MODE; self.search_start=rospy.get_time()
-        else:        
+            end=rospy.get_time()
+            self.detect_t=end-start if self.detect_t==0 else (self.detect_t+end-start)/2
+
+        else:
+            start=rospy.get_time()        
             s,n,r,depth=cv2.split(im)
             frame=cv2.merge([s,n,r])
             copy_frame=frame.copy()
@@ -316,6 +328,9 @@ class Yolov5Tracker:
             self.prev_frame=frame
             if ok and self.publish_image:
                 self.draw_rectangles([self.bbox.xmin, self.bbox.ymin], [self.bbox.xmax, self.bbox.ymax])
+            
+            end=rospy.get_time()
+            self.track_t=end-start if self.track_t==0 else (self.track_t+end-start)/2
                
 
     def callback(self, data):
@@ -433,9 +448,13 @@ class Yolov5Tracker:
         return iou
 
     def keyboard_callback(self, input):
-        print(input)
+        # print("Input: ", input)
         if input=='s':
             self.flag_select=True
+        elif input=='t':
+            print("Tracker mean time: ", self.track_t)
+            print("Detect mean time: ", self.detect_t)
+            print("Search mean time: ", self.search_t)
 
 # Class for reading keyboard input
 class KeyboardThread(Thread):
@@ -447,7 +466,17 @@ class KeyboardThread(Thread):
 
     def run(self):
         while True:
-            self.input_cbk(input())
+            self.input_cbk(self.getch())
+    
+    def getch(self):
+        fd = sys.stdin.fileno()
+        orig = termios.tcgetattr(fd)
+
+        try:
+            tty.setcbreak(fd)  # or tty.setraw(fd) if you prefer raw mode's behavior.
+            return sys.stdin.read(1)
+        finally:
+            termios.tcsetattr(fd, termios.TCSAFLUSH, orig)
 
 def main_thread(node: Yolov5Tracker):
   while not rospy.is_shutdown():
