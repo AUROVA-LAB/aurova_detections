@@ -99,6 +99,7 @@ class Yolov5Tracker:
         self.SELECT_TARGET_MODE, self.SEARCH_MODE, self.TRACK_MODE = 0, 1, 2 #Global modes of the detector/tracker
         self.TRACKER_NORMAL, self.TRACKER_LEFT, self.TRACKER_RIGHT =  0, 1, 2 #Tracker modes for considering that the image is 360 degres.
         self.operation_mode=self.SELECT_TARGET_MODE
+        self.saved_selection=[]
 
         #Time measure
         self.detect_t=0; self.track_t=0; self.search_t=0
@@ -197,26 +198,69 @@ class Yolov5Tracker:
     
     def select_target(self, im):
         bounding_boxes = self.detectYolo5v(im.copy())
+        now=rospy.get_time()
+        cv2.rectangle(self.im_output, (int(self.img_size[0]*0.43), -1), (int(self.img_size[0]*0.57), self.img_size[1]+1), (0,155,155), 2, 1)
+        i=0
+        #Delete the old one because it wasn't detected for too much time.
+        while i<len(self.saved_selection):
+            if now-self.saved_selection[i]["time"]>self.saved_selection[i]["count"]+2:
+                del self.saved_selection[i]
+                continue
+            i+=1
         for bbox in bounding_boxes:
-            #Select decision
-            #The first bounding_box that is near the robot(only debug)
-            if bbox.ymax-bbox.ymin<60: continue
-            self.bbox=bbox
-            # Calculate histogram of the segmented person
+            # #Select decision
+
+            ### The first bounding_box that is near the robot(only debug) ###
+            # if bbox.ymax-bbox.ymin<60: continue
+            # self.bbox=bbox
+            # # Calculate histogram of the segmented person
+            # segment_frame, mask=self.segment_person(im,bbox)
+            # self.target_descriptor=self.histogramPartsBody(segment_frame, mask)
+            # self.operation_mode=self.TRACK_MODE; self.tracker_mode=self.TRACKER_NORMAL
+            # self.tracker_start=rospy.get_time()
+            # s,n,r,depth=cv2.split(im)
+            # frame=cv2.merge([s,n,r])
+            # self.prev_frame=frame
+            # #Change to x,y,(top point)w,h(width,heigth) format for opencv
+            # self.bbox_tracker=[self.bbox.xmin, self.bbox.ymin, self.bbox.xmax-self.bbox.xmin, self.bbox.ymax-self.bbox.ymin]
+            # self.tracker.init(frame, self.bbox_tracker)
+            # #draw bounding box
+            # if self.publish_image:
+            #     self.draw_rectangles((0,0,0))
+            # break
+
+            ### A person who have been in front of the robot for 5 seconds. ###
             segment_frame, mask=self.segment_person(im,bbox)
-            self.target_descriptor=self.histogramPartsBody(segment_frame, mask)
-            self.operation_mode=self.TRACK_MODE; self.tracker_mode=self.TRACKER_NORMAL
-            self.tracker_start=rospy.get_time()
-            s,n,r,depth=cv2.split(im)
-            frame=cv2.merge([s,n,r])
-            self.prev_frame=frame
-            #Change to x,y,(top point)w,h(width,heigth) format for opencv
-            self.bbox_tracker=[self.bbox.xmin, self.bbox.ymin, self.bbox.xmax-self.bbox.xmin, self.bbox.ymax-self.bbox.ymin]
-            self.tracker.init(frame, self.bbox_tracker)
-            #draw bounding box
-            if self.publish_image:
-                self.draw_rectangles((0,0,0))
-            break
+            descriptor=self.histogramPartsBody(segment_frame, mask)
+            match=False
+            #Filter the persons that aren't at the front or are too far away.
+            if bbox.xmin>self.img_size[0]*0.43 and bbox.xmax<self.img_size[0]*0.57 and  bbox.ymax-bbox.ymin>0.33*self.img_size[1]:
+                for i in range(len(self.saved_selection)):
+                    if self.get_iou(bbox,self.saved_selection[i]["bbox"]) > 0.8:
+                        corr=cv2.compareHist(descriptor,self.saved_selection[i]["descriptor"],cv2.HISTCMP_CORREL)
+                        if  corr>self.threshold_tracker:
+                            match=True
+                            if now-self.saved_selection[i]["time"]>self.saved_selection[i]["count"]+1:
+                                self.saved_selection[i]["count"]+=1
+                                if self.saved_selection[i]["count"]==5:   
+                                    self.bbox=bbox; self.target_descriptor=descriptor         
+                                    self.operation_mode=self.TRACK_MODE; self.tracker_mode=self.TRACKER_NORMAL
+                                    self.tracker_start=rospy.get_time()
+                                    s,n,r,depth=cv2.split(im)
+                                    frame=cv2.merge([s,n,r])
+                                    self.prev_frame=frame
+                                    #Change to x,y,(top point)w,h(width,heigth) format for opencv
+                                    self.bbox_tracker=[self.bbox.xmin, self.bbox.ymin, self.bbox.xmax-self.bbox.xmin, self.bbox.ymax-self.bbox.ymin]
+                                    self.tracker.init(frame, self.bbox_tracker)
+                                    #draw bounding box
+                                    if self.publish_image:
+                                        self.draw_rectangles((0,0,0))
+                                    self.saved_selection=[]
+                            break
+            
+                if not match:
+                    thisdict = {"bbox":bbox, "descriptor":descriptor, "time":now, "count":0}
+                    self.saved_selection.append(thisdict)
 
     def search_target(self, im):
         start=rospy.get_time()
@@ -240,7 +284,7 @@ class Yolov5Tracker:
             if self.publish_image:
                 self.draw_rectangles((0,255,0))
             # Update descriptor
-            self.target_descriptor=(self.target_descriptor+best_descriptor)/2
+            self.target_descriptor=self.target_descriptor*0.9+best_descriptor*0.1
         elif rospy.get_time()-self.search_start>self.search_time: self.operation_mode=self.SELECT_TARGET_MODE
         end=rospy.get_time()
         self.search_t=end-start if self.search_t==0 else (self.search_t+end-start)/2
@@ -271,7 +315,7 @@ class Yolov5Tracker:
                 if self.publish_image:
                     self.draw_rectangles((0,0,255))
                 # Update descriptor
-                self.target_descriptor=(self.target_descriptor+best_descriptor)/2
+                self.target_descriptor=self.target_descriptor*0.9+best_descriptor*0.1
             else: self.operation_mode=self.SEARCH_MODE; self.search_start=rospy.get_time()
             end=rospy.get_time()
             self.detect_t=end-start if self.detect_t==0 else (self.detect_t+end-start)/2
