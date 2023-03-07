@@ -62,19 +62,6 @@ RUN cd /home/ros_ws/src/ && git clone https://github.com/EPVelasco/detection_msg
 # # Compile the package
 RUN cd /home/ros_ws/ && source /opt/ros/noetic/setup.bash && catkin_make
 
-# # Copy files from host to docker
-COPY ./yolov5.launch /home/ros_ws/src/yolov5_ros/launch/
-COPY ./upsampling.py /usr/local/lib/python3.8/dist-packages/torch/nn/modules/
-COPY ./Arial.ttf /home/.config/Ultralytics/
-COPY ./yolo.py /home/ros_ws/src/yolov5_ros/src/yolov5/models/
-COPY ./detect.py /home/ros_ws/src/yolov5_ros/src/
-COPY ./merge_channels_ouster.py /home/ros_ws/src/yolov5_ros/src/
-COPY ./CMakeLists.txt /home/ros_ws/src/yolov5_ros/
-
-# # Make program executable
-RUN cd /home/ros_ws/src/yolov5_ros/src/ && chmod +x detect.py
-RUN cd /home/ros_ws/src/yolov5_ros/src/ && chmod +x merge_channels_ouster.py
-
 # Install OpenCV with CUDA support
 RUN pip uninstall -y opencv-python
 RUN apt update && apt-get -y install build-essential cmake unzip pkg-config \
@@ -120,8 +107,20 @@ COPY ./dasiamrpn* /home/ros_ws/src/yolov5_ros/models/
 COPY ./best.pt /home/ros_ws/src/yolov5_ros/models/
 COPY ./tracker.launch /home/ros_ws/src/yolov5_ros/launch/
 COPY ./tracker.py /home/ros_ws/src/yolov5_ros/src/
+COPY ./yolov5.launch /home/ros_ws/src/yolov5_ros/launch/
+COPY ./upsampling.py /usr/local/lib/python3.8/dist-packages/torch/nn/modules/
+COPY ./Arial.ttf /home/.config/Ultralytics/
+COPY ./yolo.py /home/ros_ws/src/yolov5_ros/src/yolov5/models/
+COPY ./detect.py /home/ros_ws/src/yolov5_ros/src/
+COPY ./merge_channels_ouster.py /home/ros_ws/src/yolov5_ros/src/
+COPY ./CMakeLists.txt /home/ros_ws/src/yolov5_ros/
 
 # # Make program executable
 RUN cd /home/ros_ws/src/yolov5_ros/src/ && chmod +x tracker.py
+RUN cd /home/ros_ws/src/yolov5_ros/src/ && chmod +x detect.py
+RUN cd /home/ros_ws/src/yolov5_ros/src/ && chmod +x merge_channels_ouster.py
 
+#Detect
+#CMD export PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python && cd /home/ros_ws/ && /bin/bash -c "source devel/setup.bash; catkin_make; source devel/setup.bash; roslaunch yolov5_ros detectlaunch"
+#Tracker
 CMD export PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python && cd /home/ros_ws/ && /bin/bash -c "source devel/setup.bash; catkin_make; source devel/setup.bash; roslaunch yolov5_ros tracker.launch"
