@@ -24,8 +24,7 @@
     <arg name="input_image_topic"       default="/ouster_merged"/>
     <arg name="output_topic"            default="/yolov5/detections"/>
 
-    <!-- Optional topic (publishing annotated image) -->
-    <arg name="publish_image"           default="true"/>
+    <!-- Topic annotated image -->
     <arg name="output_image_topic"      default="/yolov5/image_out"/>
 
     <node pkg="yolov5_ros" name="merge_channels" type="merge_channels_ouster.py"></node>
@@ -47,7 +46,6 @@
         <param name="input_image_topic"     value="$(arg input_image_topic)"/>
         <param name="output_topic"          value="$(arg output_topic)"/>
 
-        <param name="publish_image"         value="$(arg publish_image)"/>
         <param name="output_image_topic"    value="$(arg output_image_topic)"/>
 
         <param name="detect_frequency"      value="$(arg detect_frequency)"/>
