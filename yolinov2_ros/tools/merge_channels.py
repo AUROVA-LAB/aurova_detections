@@ -19,11 +19,11 @@ if not os.path.exists(path+"train"):
 
 for i in range(int(id)+1):
     depht = cv2.imread(path+"range/range"+str(i)+".png",cv2.IMREAD_GRAYSCALE)
-    near_ir=cv2.imread(path+"nearir/nearir_"+str(i)+".png",cv2.IMREAD_GRAYSCALE)
-    reflect=cv2.imread(path+"reflec/reflec"+str(i)+".png",cv2.IMREAD_GRAYSCALE)
-    signal=cv2.imread(path+"signal/signal"+str(i)+".png",cv2.IMREAD_GRAYSCALE)
+    nearir = cv2.imread(path+"nearir/nearir_"+str(i)+".png",cv2.IMREAD_GRAYSCALE)
+    reflec = cv2.imread(path+"reflec/reflec"+str(i)+".png",cv2.IMREAD_GRAYSCALE)
+    signal = cv2.imread(path+"signal/signal"+str(i)+".png",cv2.IMREAD_GRAYSCALE)
 
-    merged=cv2.merge([signal,near_ir,reflect])
+    merged=cv2.merge([nearir,reflec,depht])
 
     if cv2.imwrite(path+"train/merged_"+str(i)+".png", merged):
         print(i)
