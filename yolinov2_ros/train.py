@@ -121,8 +121,11 @@ def main():
 	)
 
 	# model
-	model = UnetPlusPlus(BACKBONE, "imagenet", in_channels=3, out_channels=1).to(DEVICE)
+	model = UnetPlusPlus(BACKBONE, None, in_channels=3, out_channels=1).to(DEVICE)
+	#model = UnetPlusPlus(BACKBONE, "imagenet", in_channels=3, out_channels=1).to(DEVICE)
 	#model = UNET_SMP(BACKBONE, "imagenet", in_channels=3, out_channels=1).to(DEVICE)
+	n_epoch = 149
+	load_checkpoint(torch.load(PATH + "/epochs/checkpoint_epoch_" + str(n_epoch) + ".pth.tar"), model)
 	#loss fn
 	loss_fn = nn.BCEWithLogitsLoss()
 	#loss_fn = JaccardLoss('binary')
