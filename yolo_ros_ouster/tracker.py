@@ -11,6 +11,7 @@ import os
 import sys
 from rostopic import get_topic_type
 from copy import copy
+from datetime import datetime
 
 from sensor_msgs.msg import Image, CompressedImage
 from detection_msgs.msg import BoundingBox, BoundingBoxes
@@ -95,35 +96,45 @@ class Yolov5Tracker:
         self.search_time=rospy.get_param("~search_time", 2.0) #Search during 2 seconds before changing mode
         self.threshold_tracker=rospy.get_param("~threshold_tracker", 0.4) #Minimum correlation to consider a detected target as a possible target.
         self.threshold_search=rospy.get_param("~threshold_search", 0.6) #More restrictive to re-identify the target during search mode
+        self.aug_per=rospy.get_param("~search_augmentation_percentage", 0.1) #More restrictive to re-identify the target during search mode
+
+        self.output_video_dir=rospy.get_param("~output_video_dir", 0.1) #More restrictive to re-identify the target during search mode
         # Define the operation modes
         self.SELECT_TARGET_MODE, self.SEARCH_MODE, self.TRACK_MODE = 0, 1, 2 #Global modes of the detector/tracker
         self.TRACKER_NORMAL, self.TRACKER_LEFT, self.TRACKER_RIGHT =  0, 1, 2 #Tracker modes for considering that the image is 360 degres.
         self.operation_mode=self.SELECT_TARGET_MODE
         self.saved_selection=[]
-
+        self.search_area=BoundingBox()
+        self.search_area.xmin=0; self.search_area.xmax=self.img_size[0]
+        self.search_area.ymin=0; self.search_area.ymax=self.img_size[1]
         #Time measure
         self.detect_t=0; self.track_t=0; self.search_t=0
 
         # start main thread
         self.thread = Thread(target = main_thread, args = (self, ))
-        self.thread.start()       
+        self.thread.start()     
+        self.reset_dasaim=False  
         
         # Initialize subscriber to Image/CompressedImage topic
         input_image_type, input_image_topic, _ = get_topic_type(rospy.get_param("~input_image_topic"), blocking = True)
+        search_topic=rospy.get_param("~search_topic")
         self.compressed_input = input_image_type == "sensor_msgs/CompressedImage"
 
         if self.compressed_input:
             self.image_sub = rospy.Subscriber(
-                input_image_topic, CompressedImage, self.callback, queue_size=1
+                input_image_topic, CompressedImage, self.image_callback, queue_size=1
             )
         else:
             self.image_sub = rospy.Subscriber(
-                input_image_topic, Image, self.callback, queue_size=1
+                input_image_topic, Image, self.image_callback, queue_size=1
             )
-
+        self.search_sub=rospy.Subscriber(search_topic, BoundingBoxes, self.search_area_callback, queue_size=1)
         # Initialize prediction publisher
-        self.pred_pub = rospy.Publisher(
-            rospy.get_param("~output_topic"), BoundingBoxes, queue_size=10
+        self.dasiam_pub = rospy.Publisher(
+            rospy.get_param("~output_topic_dasiamrpn"), BoundingBoxes, queue_size=1
+        )
+        self.yolo_pub = rospy.Publisher(
+            rospy.get_param("~output_topic_yolo"), BoundingBoxes, queue_size=1
         )
         
         # Initialize image publisher
@@ -230,7 +241,7 @@ class Yolov5Tracker:
                             match=True
                             if now-self.saved_selection[i]["time"]>self.saved_selection[i]["count"]+1:
                                 self.saved_selection[i]["count"]+=1
-                                if self.saved_selection[i]["count"]==5:   
+                                if self.saved_selection[i]["count"]==3:   
                                     self.bbox=bbox; self.target_descriptor=descriptor         
                                     self.operation_mode=self.TRACK_MODE; self.tracker_mode=self.TRACKER_NORMAL
                                     self.tracker_start=rospy.get_time()
@@ -241,7 +252,7 @@ class Yolov5Tracker:
                                     self.bbox_tracker=[self.bbox.xmin, self.bbox.ymin, self.bbox.xmax-self.bbox.xmin, self.bbox.ymax-self.bbox.ymin]
                                     self.tracker.init(frame, self.bbox_tracker)
                                     #draw bounding box
-                                    self.draw_rectangles((0,0,0))
+                                    self.draw_rectangles(self.bbox,self.bounding_boxes_yolo,(0,0,0))
                                     self.saved_selection=[]
                             break
             
@@ -254,59 +265,86 @@ class Yolov5Tracker:
         best_corr=0
         bounding_boxes = self.detectYolo5v(im.copy())
         for bbox in bounding_boxes:
-            segment_frame, mask=self.segment_person(im,bbox)
-            descriptor=self.histogramPartsBody(segment_frame, mask)
-            corr=cv2.compareHist(self.target_descriptor,descriptor,cv2.HISTCMP_CORREL)
-            if corr>self.threshold_search and corr>best_corr:
-                best_corr=corr; best_bbox=bbox; best_descriptor=descriptor
-        s,n,r,depth=cv2.split(im)
-        frame=cv2.merge([s,n,r])
+            if self.get_iou(bbox,self.search_area)>0:
+                segment_frame, mask=self.segment_person(im,bbox)
+                descriptor=self.histogramPartsBody(segment_frame, mask)
+                corr=cv2.compareHist(self.target_descriptor,descriptor,cv2.HISTCMP_CORREL)
+                # cv2.rectangle(self.im_output, (bbox.xmin, bbox.ymin), (bbox.xmax, bbox.ymax), (0,0,0), 2, 1)
+                # cv2.putText(self.im_output, f'{corr:.2f}',(bbox.xmin, bbox.ymin+10),cv2.FONT_HERSHEY_SIMPLEX,0.7,(0,0,255))
+                if corr>self.threshold_search and corr>best_corr:
+                    best_corr=corr; best_bbox=bbox; best_descriptor=descriptor
         end=rospy.get_time()
         if best_corr>0:
             self.bbox=best_bbox
+            s,n,r,depth=cv2.split(im)
+            frame=cv2.merge([s,n,r])
             #Change to x,y,(top point)w,h(width,heigth) format for opencv
             self.bbox_tracker=[self.bbox.xmin, self.bbox.ymin, self.bbox.xmax-self.bbox.xmin, self.bbox.ymax-self.bbox.ymin]
             self.tracker.init(frame, self.bbox_tracker); self.prev_frame=frame
             self.tracker_mode=self.TRACKER_NORMAL; self.operation_mode=self.TRACK_MODE
             self.tracker_start=rospy.get_time()
-            self.draw_rectangles((0,255,0))
+            self.draw_rectangles(best_bbox,self.bounding_boxes_yolo,(0,255,0))
             # Update descriptor
-            self.target_descriptor=self.target_descriptor*0.9+best_descriptor*0.1
-        elif rospy.get_time()-self.tracker_start<self.detect_period: self.track_target(im)
+            self.target_descriptor=self.target_descriptor*0.5+best_descriptor*0.5
+        elif rospy.get_time()-self.tracker_start<self.detect_period: self.track_target(im); self.increase_search()
         elif rospy.get_time()-self.search_start>self.search_time: self.operation_mode=self.SELECT_TARGET_MODE
         self.search_t=end-start if self.search_t==0 else (self.search_t+end-start)/2
 
     def track_mode(self, im):
+        self.track_target(im)
+
         if rospy.get_time()-self.tracker_start>self.detect_period:
             start=rospy.get_time()
             best_corr=0
             bounding_boxes = self.detectYolo5v(im.copy())
             for bbox in bounding_boxes:
-                segment_frame, mask=self.segment_person(im,bbox)
-                descriptor=self.histogramPartsBody(segment_frame, mask)
-                corr=cv2.compareHist(self.target_descriptor,descriptor,cv2.HISTCMP_CORREL)
-                if corr>self.threshold_tracker:
-                    #Use the percentage of are in the intersection of the bounding boxes.
-                    iou=self.get_iou(bbox,self.bbox)
-                    corr+=iou/2
-                    if iou>0 and corr>best_corr:
-                        best_corr=corr; best_bbox=bbox; best_descriptor=descriptor
-            s,n,r,depth=cv2.split(im)
-            frame=cv2.merge([s,n,r])
-            if best_corr>0:
-                self.bbox=best_bbox
-                #Change to x,y,(top left point)w,h(width,heigth) format for opencv
-                self.bbox_tracker=[self.bbox.xmin, self.bbox.ymin, self.bbox.xmax-self.bbox.xmin, self.bbox.ymax-self.bbox.ymin]
-                self.tracker.init(frame, self.bbox_tracker); self.prev_frame=frame
-                self.tracker_mode=self.TRACKER_NORMAL; self.tracker_start=rospy.get_time()
-                self.draw_rectangles((0,0,255))
-                # Update descriptor
-                self.target_descriptor=self.target_descriptor*0.9+best_descriptor*0.1
-            else: self.operation_mode=self.SEARCH_MODE; self.search_start=rospy.get_time(); self.tracker_start=rospy.get_time()
+                iou=self.get_iou(bbox,self.search_area)
+                if iou>0:
+                    segment_frame, mask=self.segment_person(im,bbox)
+                    descriptor=self.histogramPartsBody(segment_frame, mask)
+                    corr=cv2.compareHist(self.target_descriptor,descriptor,cv2.HISTCMP_CORREL)
+                    # cv2.rectangle(self.im_output, (bbox.xmin, bbox.ymin), (bbox.xmax, bbox.ymax), (0,0,0), 2, 1)
+                    # cv2.putText(self.im_output, f'{corr:.2f}',(bbox.xmin, bbox.ymin+10),cv2.FONT_HERSHEY_SIMPLEX,0.7,(0,0,255))
+                    if corr>self.threshold_tracker:
+                        #Use the percentage of are in the intersection of the bounding boxes.
+                        corr+=iou/2
+                        if corr>best_corr:
+                            best_corr=corr; best_bbox=bbox; best_descriptor=descriptor
             end=rospy.get_time()
+            if best_corr>0:
+                self.search_start=rospy.get_time(); self.tracker_start=rospy.get_time()
+                self.draw_rectangles(best_bbox,self.bounding_boxes_yolo,(0,0,255))
+                # Update descriptor
+                self.target_descriptor=self.target_descriptor*0.5+best_descriptor*0.5
+                #Change to x,y,(top left point)w,h(width,heigth) format for opencv
+                #In case they don't match, trust in the yolo prediction.
+                if self.reset_dasaim or self.get_iou(best_bbox,self.bbox)<0.75:
+                    self.bbox=best_bbox
+                    s,n,r,depth=cv2.split(im)
+                    frame=cv2.merge([s,n,r])
+                    self.bbox_tracker=[self.bbox.xmin, self.bbox.ymin, self.bbox.xmax-self.bbox.xmin, self.bbox.ymax-self.bbox.ymin]
+                    self.tracker.init(frame, self.bbox_tracker); self.prev_frame=frame
+                    self.tracker_mode=self.TRACKER_NORMAL; self.reset_dasaim=False
+                    
+
+            elif rospy.get_time()-self.search_start>self.search_time:
+                #Detect if the target of DaSiamRPN is a person.
+                for bbox in bounding_boxes:
+                    iou=self.get_iou(bbox,self.bbox)
+                    if iou>best_corr:
+                        best_corr=iou; best_bbox=bbox
+                    end=rospy.get_time()
+                if best_corr>0:
+                    self.search_start=rospy.get_time(); self.tracker_start=rospy.get_time()
+                    self.draw_rectangles(best_bbox,self.bounding_boxes_yolo,(0,0,255))
+                    # New descriptor
+                    segment_frame, mask=self.segment_person(im,best_bbox)
+                    self.target_descriptor=self.histogramPartsBody(segment_frame, mask)
+                else:
+                    #Select mode
+                    self.operation_mode=self.SELECT_TARGET_MODE   
             self.detect_t=end-start if self.detect_t==0 else (self.detect_t+end-start)/2
 
-        else: self.track_target(im)
 
     def track_target(self, im,):
         start=rospy.get_time()        
@@ -356,16 +394,20 @@ class Yolov5Tracker:
         self.bbox.xmin=self.bbox_tracker[0]; self.bbox.ymin=self.bbox_tracker[1]
         self.bbox.xmax=self.bbox_tracker[0]+self.bbox_tracker[2]; self.bbox.ymax=self.bbox_tracker[1]+self.bbox_tracker[3]
 
+        #Possible lost the target, update with Yolo if possible
+        if self.get_iou(self.bbox,self.search_area)==0: self.reset_dasaim=True
+
+
         # Draw bounding box
         self.prev_frame=frame
         if ok:
-            self.draw_rectangles()
+            self.draw_rectangles(self.bbox,self.bounding_boxes)
         
         end=rospy.get_time()
         self.track_t=end-start if self.track_t==0 else (self.track_t+end-start)/2
                
 
-    def callback(self, data):
+    def image_callback(self, data):
         self.data = data
 
         if self.compressed_input:
@@ -373,6 +415,11 @@ class Yolov5Tracker:
         else:
             self.im = self.bridge.imgmsg_to_cv2(data, desired_encoding="bgra8")
         self.flag_image=True
+
+    def search_area_callback(self, data):
+        self.search_area = data.bounding_boxes[0]
+        # self.operation_mode=self.SEARCH_MODE
+        # self.search_start=rospy.get_time()
         
 
     def preprocess(self, img):
@@ -387,35 +434,43 @@ class Yolov5Tracker:
 
         return img, img0 
     
-    def draw_rectangles(self, color=(255,0,0)):
-        self.bbox.ymin=max(0,self.bbox.ymin); self.bbox.ymax=min(self.img_size[1],self.bbox.ymax)
-        if self.bbox.xmin<0:
-            if self.bbox.xmax<0:
-                aux=copy(self.bbox); aux.xmin+=self.img_size[0]; aux.xmax+=self.img_size[0]
-                self.bounding_boxes.append(aux)
+    def draw_rectangles(self, bbox, bounding_boxes_msg, color=(255,0,0)):
+        bbox.ymin=max(0,bbox.ymin); bbox.ymax=min(self.img_size[1],bbox.ymax)
+        if bbox.xmin<0:
+            if bbox.xmax<0:
+                aux=copy(bbox); aux.xmin+=self.img_size[0]; aux.xmax+=self.img_size[0]
+                aux.xmin=int(aux.xmin);aux.xmax=int(aux.xmax);aux.ymin=int(aux.ymin);aux.ymax=int(aux.ymax)
+                bounding_boxes_msg.append(aux)
                 cv2.rectangle(self.im_output, (aux.xmin, aux.ymin), (aux.xmax, aux.ymax), color, 2, 1)
             else:
-                aux=copy(self.bbox); aux.xmin+=self.img_size[0]; aux.xmax=self.img_size[0]
-                self.bounding_boxes.append(aux)
-                aux2=copy(self.bbox); aux2.xmin=0
-                self.bounding_boxes.append(aux2)
+                aux=copy(bbox); aux.xmin+=self.img_size[0]; aux.xmax=self.img_size[0]
+                aux.xmin=int(aux.xmin);aux.xmax=int(aux.xmax);aux.ymin=int(aux.ymin);aux.ymax=int(aux.ymax)
+                bounding_boxes_msg.append(aux)
+                aux2=copy(bbox); aux2.xmin=0
+                aux2.xmin=int(aux2.xmin);aux2.xmax=int(aux2.xmax);aux2.ymin=int(aux2.ymin);aux2.ymax=int(aux2.ymax)
+                bounding_boxes_msg.append(aux2)
                 cv2.rectangle(self.im_output, (aux.xmin, aux.ymin), (aux.xmax, aux.ymax), color, 2, 1)
                 cv2.rectangle(self.im_output, (aux2.xmin, aux2.ymin), (aux2.xmax, aux2.ymax), color, 2, 1)
-        elif self.bbox.xmax>self.img_size[0]:
-            if self.bbox.xmin>self.img_size[0]:
-                aux=copy(self.bbox); aux.xmin-=self.img_size[0]; aux.xmax-=self.img_size[0]
-                self.bounding_boxes.append(aux)
+        elif bbox.xmax>self.img_size[0]:
+            if bbox.xmin>self.img_size[0]:
+                aux=copy(bbox); aux.xmin-=self.img_size[0]; aux.xmax-=self.img_size[0]
+                aux.xmin=int(aux.xmin);aux.xmax=int(aux.xmax);aux.ymin=int(aux.ymin);aux.ymax=int(aux.ymax)
+                bounding_boxes_msg.append(aux)
                 cv2.rectangle(self.im_output, (aux.xmin, aux.ymin), (aux.xmax, aux.ymax), color, 2, 1)
             else:
-                aux=copy(self.bbox); aux.xmin=0; aux.xmax-=self.img_size[0]
-                self.bounding_boxes.append(aux)
-                aux2=copy(self.bbox); aux2.xmax=self.img_size[0]
-                self.bounding_boxes.append(aux2)
+                aux=copy(bbox); aux.xmin=0; aux.xmax-=self.img_size[0]
+                aux.xmin=int(aux.xmin);aux.xmax=int(aux.xmax);aux.ymin=int(aux.ymin);aux.ymax=int(aux.ymax)
+                bounding_boxes_msg.append(aux)
+                aux2=copy(bbox); aux2.xmax=self.img_size[0]
+                aux2.xmin=int(aux2.xmin);aux2.xmax=int(aux2.xmax);aux2.ymin=int(aux2.ymin);aux2.ymax=int(aux2.ymax)
+                bounding_boxes_msg.append(aux2)
                 cv2.rectangle(self.im_output, (aux.xmin, aux.ymin), (aux.xmax, aux.ymax), color, 2, 1)
                 cv2.rectangle(self.im_output, (aux2.xmin, aux2.ymin), (aux2.xmax, aux2.ymax), color, 2, 1)
         else:
-            self.bounding_boxes.append(self.bbox)
-            cv2.rectangle(self.im_output, (self.bbox.xmin, self.bbox.ymin), (self.bbox.xmax, self.bbox.ymax), color, 2, 1)
+            aux=copy(bbox)
+            aux.xmin=int(aux.xmin);aux.xmax=int(aux.xmax);aux.ymin=int(aux.ymin);aux.ymax=int(aux.ymax)
+            bounding_boxes_msg.append(aux)
+            cv2.rectangle(self.im_output, (bbox.xmin, bbox.ymin), (bbox.xmax, bbox.ymax), color, 2, 1)
 
     def segment_person(self, frame, bbox):
         segment_frame=frame[bbox.ymin:bbox.ymax, bbox.xmin:bbox.xmax]
@@ -438,7 +493,9 @@ class Yolov5Tracker:
         mask=np.zeros(shape[:2], dtype="uint8")
         for i in range(shape[0]):
             for j in range(shape[1]):
-                if segment_frame[i,j,3]==median: mask[i,j]=255
+                if segment_frame[i,j,3]==median: 
+                    mask[i,j]=255
+                    # self.im_output[bbox.ymin+i,bbox.xmin+j]=(255,255,255,255)
 
         return segment_frame, mask
     
@@ -447,7 +504,7 @@ class Yolov5Tracker:
         shape = np.shape(segment_frame)
         descriptor=[]
         part_mask=None
-        for i in range(5):
+        for i in range(1,5):
             part_frame = segment_frame[int(0.2*i*shape[0]):int(0.2*(i+1)*shape[0])]
             if mask is not None:
                 part_mask = mask[int(0.2*i*shape[0]):int(0.2*(i+1)*shape[0])]
@@ -458,32 +515,81 @@ class Yolov5Tracker:
         descriptor=np.array(descriptor); descriptor=descriptor.flatten()
         return descriptor
     
+
     def get_iou(self, bb1, bb2):
         """
         Calculate the Intersection over Union (IoU) of two bounding boxes.
+        The second bbox can be outside the limits, considering the 360 degrees.
         """
-        # determine the coordinates of the intersection rectangle
-        x_left = max(bb1.xmin, bb2.xmin)
-        y_top = max(bb1.ymin, bb2.ymin)
-        x_right = min(bb1.xmax, bb2.xmax)
-        y_bottom = min(bb1.ymax, bb2.ymax)
+        outside_limits=False
+        if(bb2.xmax>self.img_size[0] and bb2.xmin<0):
+            return (bb1.xmax - bb1.xmin) * (bb1.ymax - bb1.ymin) / (self.img_size[0]*self.img_size[1])
+        elif(bb2.xmax>self.img_size[0]):
+            outside_limits=True
+            bb3=copy(bb2); bb3.xmin=0; bb3.xmax=bb2.xmax-self.img_size[0]
+            bb2.xmax=self.img_size[0]
+        elif(bb2.xmin<0):
+            outside_limits=True
+            bb3=copy(bb2); bb3.xmin=self.img_size[0]+bb2.xmin; bb3.xmax=self.img_size[0]
+            bb2.xmin=0
 
-        if x_right < x_left or y_bottom < y_top:
-            return 0.0
-        # The intersection of two axis-aligned bounding boxes is always an
-        # axis-aligned bounding box
-        intersection_area = (x_right - x_left) * (y_bottom - y_top)
+        if outside_limits:
+            x_left = max(bb1.xmin, bb2.xmin)
+            y_top = max(bb1.ymin, bb2.ymin)
+            x_right = min(bb1.xmax, bb2.xmax)
+            y_bottom = min(bb1.ymax, bb2.ymax)
+            intersection_area=0
+            if x_right > x_left and y_bottom > y_top:
+                intersection_area+=(x_right - x_left) * (y_bottom - y_top)
 
-        # compute the area of both AABBs
-        bb1_area = (bb1.xmax - bb1.xmin) * (bb1.ymax - bb1.ymin)
-        bb2_area = (bb2.xmax - bb2.xmin) * (bb2.ymax - bb2.ymin)
+            x_left = max(bb1.xmin, bb3.xmin)
+            y_top = max(bb1.ymin, bb3.ymin)
+            x_right = min(bb1.xmax, bb3.xmax)
+            y_bottom = min(bb1.ymax, bb3.ymax)
+            if x_right > x_left and y_bottom > y_top:
+                intersection_area+=(x_right - x_left) * (y_bottom - y_top)
 
-        # compute the intersection over union by taking the intersection
-        # area and dividing it by the areas - the interesection area
-        iou = intersection_area / float(bb1_area + bb2_area - intersection_area)
-        assert iou >= 0.0
-        assert iou <= 1.0
-        return iou
+            # compute the area of both AABBs
+            bb1_area = (bb1.xmax - bb1.xmin) * (bb1.ymax - bb1.ymin)
+            bb2_area = (bb2.xmax - bb2.xmin) * (bb2.ymax - bb2.ymin)
+            bb3_area = (bb3.xmax - bb3.xmin) * (bb3.ymax - bb3.ymin)
+            # compute the intersection over union by taking the intersection
+            # area and dividing it by the areas - the interesection area
+            iou = intersection_area / float(bb1_area + bb2_area + bb3_area - intersection_area)
+            assert iou >= 0.0
+            assert iou <= 1.0
+            return iou
+        
+        else:
+            # determine the coordinates of the intersection rectangle
+            x_left = max(bb1.xmin, bb2.xmin)
+            y_top = max(bb1.ymin, bb2.ymin)
+            x_right = min(bb1.xmax, bb2.xmax)
+            y_bottom = min(bb1.ymax, bb2.ymax)
+
+            if x_right < x_left or y_bottom < y_top:
+                return 0.0
+            # The intersection of two axis-aligned bounding boxes is always an
+            # axis-aligned bounding box
+            intersection_area = (x_right - x_left) * (y_bottom - y_top)
+
+            # compute the area of both AABBs
+            bb1_area = (bb1.xmax - bb1.xmin) * (bb1.ymax - bb1.ymin)
+            bb2_area = (bb2.xmax - bb2.xmin) * (bb2.ymax - bb2.ymin)
+
+            # compute the intersection over union by taking the intersection
+            # area and dividing it by the areas - the interesection area
+            iou = intersection_area / float(bb1_area + bb2_area - intersection_area)
+            assert iou >= 0.0
+            assert iou <= 1.0
+            return iou
+        
+    def increase_search(self):
+        width=self.search_area.xmax-self.search_area.xmin
+        height=self.search_area.ymax-self.search_area.ymin
+        self.search_area.xmax+=self.aug_per*width; self.search_area.xmin-=self.aug_per*width
+        self.search_area.ymax=min(self.img_size[1],self.search_area.ymax+self.aug_per*height)
+        self.search_area.ymin=max(0,self.search_area.ymin-self.aug_per*height)
 
     def keyboard_callback(self, input):
         # print("Input: ", input)
@@ -520,7 +626,7 @@ def main_thread(node: Yolov5Tracker):
   while not rospy.is_shutdown():
     if node.flag_select: node.operation_mode=node.SELECT_TARGET_MODE; node.flag_select=False
     if node.flag_image:
-        node.bounding_boxes=[]
+        node.bounding_boxes=[]; node.bounding_boxes_yolo=[]
         node.flag_image=False
         node.im_output=node.im.copy()
         if node.operation_mode==node.SELECT_TARGET_MODE: node.select_mode(node.im.copy())
@@ -532,8 +638,17 @@ def main_thread(node: Yolov5Tracker):
         bounding_boxes.header = node.data.header
         bounding_boxes.image_header = node.data.header
         for bbox in node.bounding_boxes:
+            bbox.probability=1.0
             bounding_boxes.bounding_boxes.append(bbox) #Append the bounding boxes which are between the limits of the image.
-        node.pred_pub.publish(bounding_boxes)
+        node.dasiam_pub.publish(bounding_boxes)
+
+        bounding_boxes_yolo = BoundingBoxes()
+        bounding_boxes_yolo.header = node.data.header
+        bounding_boxes_yolo.image_header = node.data.header
+        for bbox in node.bounding_boxes_yolo:
+            bbox.probability=1.0
+            bounding_boxes_yolo.bounding_boxes.append(bbox) #Append the bounding boxes which are between the limits of the image.
+        node.yolo_pub.publish(bounding_boxes_yolo)
         node.image_pub.publish(node.bridge.cv2_to_imgmsg(node.im_output, "bgra8")) 
       
     node.rate.sleep()

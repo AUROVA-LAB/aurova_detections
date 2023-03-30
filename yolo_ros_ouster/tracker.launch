@@ -13,8 +13,8 @@
     <!-- Tracker configuration -->
     <arg name="detect_frequency"      default="2"/>
     <arg name="search_time"           default="5"/>
-    <arg name="threshold_tracker"     default="0.55"/>
-    <arg name="threshold_search"      default="0.7"/>
+    <arg name="threshold_tracker"     default="0.5"/>
+    <arg name="threshold_search"      default="0.6"/>
     
     <!-- replace imgsz -->
     <arg name="inference_size_h"      default="128"/>
@@ -22,10 +22,13 @@
 
     <!-- ROS topics -->
     <arg name="input_image_topic"       default="/ouster_merged"/>
-    <arg name="output_topic"            default="/yolov5/detections"/>
+    <arg name="search_topic"           default="/tracker_filter/search_area"/>
+    <arg name="output_topic_yolo"               default="/tracker/yolo"/>
+    <arg name="output_topic_dasiamrpn"          default="/tracker/dasiamrpn"/>
 
     <!-- Topic annotated image -->
     <arg name="output_image_topic"      default="/yolov5/image_out"/>
+    <arg name="output_video_dir"        default="/home/alolivas/aurova-lab/labrobotica/dataset/tracker_output/"/>
 
     <node pkg="yolov5_ros" name="merge_channels" type="merge_channels_ouster.py"></node>
 
@@ -43,10 +46,13 @@
         <param name="inference_size_h"      value="$(arg inference_size_h)"/>
         <param name="inference_size_w"      value="$(arg inference_size_w)"/>
 
-        <param name="input_image_topic"     value="$(arg input_image_topic)"/>
-        <param name="output_topic"          value="$(arg output_topic)"/>
+        <param name="input_image_topic"         value="$(arg input_image_topic)"/>
+        <param name="output_topic_yolo"         value="$(arg output_topic_yolo)"/>
+        <param name="output_topic_dasiamrpn"    value="$(arg output_topic_dasiamrpn)"/>
+        <param name="search_topic"              value="$(arg search_topic)"/>
 
         <param name="output_image_topic"    value="$(arg output_image_topic)"/>
+        <param name="output_video_dir"      value="$(arg output_video_dir)"/>
 
         <param name="detect_frequency"      value="$(arg detect_frequency)"/>
         <param name="search_time"           value="$(arg search_time)"/>

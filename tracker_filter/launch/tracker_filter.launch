@@ -1,0 +1,8 @@
+<launch>
+ 
+    <node pkg="tracker_filter"   type="tracker_filter" name="tracker_filter" output="screen">
+        <rosparam command="load" file="$(find tracker_filter)/config/params.yaml" />
+    </node>
+
+ 
+</launch>
