@@ -354,7 +354,6 @@ class FusionTracker:
                 # Update descriptor
                 self.target_descriptor=self.target_descriptor*0.5+best_descriptor*0.5
                 if self.reset_dasiam or self.get_iou(self.yolo_tracker.bbox,self.dasiam_tracker.bbox)<0.25:
-                    print("Reset",rospy.get_time())
                     self.dasiam_tracker.bbox=best_bbox
                     s,n,r,depth=cv2.split(im)
                     frame=cv2.merge([s,n,r])
@@ -624,7 +623,6 @@ def main_thread(node: FusionTracker):
         node.yolo_tracker.bb_msg=[]; node.dasiam_tracker.bb_msg=[]
         node.flag_image=False
         node.im_output=node.im.copy()
-        cv2.rectangle(node.im_output, (node.search_area.xmin, node.search_area.ymin),(node.search_area.xmax, node.search_area.xmax), (155,155,0), 2, 1)
         if node.operation_mode==node.SELECT_TARGET_MODE: node.select_mode(node.im.copy())
         # elif node.operation_mode==node.SEARCH_MODE: node.search_mode(node.im.copy())
         elif node.operation_mode==node.TRACK_MODE: 
