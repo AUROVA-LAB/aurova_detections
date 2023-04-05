@@ -21,13 +21,14 @@ TrackerFilterAlgNode::TrackerFilterAlgNode(void) :
   this->private_node_handle_.getParam("max_traslation_distance", config_.max_traslation);
   this->private_node_handle_.getParam("filter_radious", config_.filter_radious);
   this->private_node_handle_.getParam("search_time", config_.search_time);
-  this->private_node_handle_.getParam("front_image_cov1", config_.fr_im_cov1);
-  this->private_node_handle_.getParam("front_image_cov2", config_.fr_im_cov2);
+  
+  this->private_node_handle_.getParam("x_model", config_.x_model);
+  this->private_node_handle_.getParam("y_model", config_.y_model);
+  ekf::KalmanConfiguration ekf_config; ekf_config.outlier_mahalanobis_threshold=config_.max_traslation;
+  ekf_config.x_model=config_.x_model; ekf_config.y_model=config_.y_model;
 
-
-  // this->ekf = new CEkf(config_.max_traslation);
+  this->ekf = new CEkf(ekf_config);
   // this->ekf->setDebug(true);
-  prev_state = Eigen::Vector2d::Zero();
   flag_rate=true; flag_tracking=false;
   range_sub.subscribe(this->private_node_handle_, "/ouster/range_image",  10);
   yolo_sub.subscribe(this->private_node_handle_, "/tracker/yolo" , 10);
@@ -58,13 +59,62 @@ void TrackerFilterAlgNode::mainNodeThread(void)
   
   // [fill action structure and make request to the action server]
   flag_rate=true;
+  //Predict covariance
+  if(ekf->flag_ekf_initialised_){
+    double t=ros::Time::now().toSec()-last_detection;
+    //Check for prevent errors in case rosbag fails (only simulations)
+    if(t<0){
+      last_detection=ros::Time::now().toSec();
+      t=config_.search_time;
+    }
+    t=min(t,config_.search_time);
+    ekf->predict(t, config_.search_time, last_state);
+  } 
   // [publish messages]
+  //Construct the pointcloud
+  if(flag_image){
+    PointCloud::Ptr cloud (new PointCloud);
+    pointCloud_msg->clear(); // clear data pointcloud
+    Eigen::Matrix<double, 2, 1> state; Eigen::Matrix<double, 2, 2> covariance;
+    ekf->getStateAndCovariance(state,covariance);
+    for (uint iy = 0;iy<im_rows; iy++){
+      for (uint ix = 0;ix<im_cols; ix++){        
+
+        // recosntruccion de la nube de puntos
+        if (data_metrics(iy,ix)==0)
+          continue;
+
+        float ang_h = 22.5 - (45.0/128.0)*iy;
+        ang_h = ang_h*M_PI/180.0;
+        float ang_w = 184.0 - (360.0/2048.0)*ix;
+        ang_w = ang_w*M_PI/180.0;
+        
+        float z = data_metrics(iy,ix) * sin(ang_h);
+        float y = sqrt(pow(data_metrics(iy,ix),2)-pow(z,2))*sin(ang_w);
+        float x = sqrt(pow(data_metrics(iy,ix),2)-pow(z,2))*cos(ang_w);
+
+        pcl::PointXYZ point(x,y,z);
+        //Remove points of the target.
+        if (sqrt(pow(x-state(0),2)+pow(y-state(1),2))>config_.filter_radious){          
+          cloud->push_back(point); 
+        }
+      }
+    }
+ 
+    pointCloud_msg->points=cloud->points;
+    pointCloud_msg->is_dense = true;
+    pointCloud_msg->width = (int) pointCloud_msg->points.size();
+    pointCloud_msg->height = 1;
+    pointCloud_msg->header.frame_id = "os_sensor";
+    ros::Time time_st = ros::Time::now(); // Para PCL se debe modificar el stamp y no se puede usar directamente el del topic de entrada
+    pointCloud_msg->header.stamp = time_st.toNSec()/1e3;
+    pc_filtered_pub.publish (pointCloud_msg);
+  }
   
   this->alg_.unlock();
 }
 
-Eigen::Vector2d TrackerFilterAlgNode::boundingBox2point(detection_msgs::BoundingBox& bb, cv::Mat& img_range, 
-                                              const Eigen::Ref<const Eigen::MatrixXf>& data_metrics){
+Eigen::Vector2d TrackerFilterAlgNode::boundingBox2point(detection_msgs::BoundingBox& bb, cv::Mat& img_range){
 
   float median = 0;
   // Calculate the median depth
@@ -132,8 +182,7 @@ void TrackerFilterAlgNode::callback(const ImageConstPtr& in_image,const boost::s
                                     const boost::shared_ptr<const detection_msgs::BoundingBoxes>& dasiam_msg)
 {
   if(!flag_rate) return;
-  flag_rate=false;
-  pointCloud_msg->clear(); // clear data pointcloud
+  flag_rate=false; flag_image=true;
   cv_bridge::CvImagePtr cv_range;
       try
       {
@@ -146,23 +195,16 @@ void TrackerFilterAlgNode::callback(const ImageConstPtr& in_image,const boost::s
       }
 
   cv::Mat img_range  = cv_range->image; // get image matrix of cv_range
-  Eigen::Matrix<float,Dynamic,Dynamic> depth_data , data_metrics;// matrix with image values and matrix qith image values into real range data
+  im_rows=img_range.rows; im_cols=img_range.cols;
+  Eigen::Matrix<float,Dynamic,Dynamic> depth_data;// matrix with image values and matrix qith image values into real range data
   cv2eigen(img_range,depth_data);       // convert img_range into eigen matrix
   data_metrics = depth_data*(261/pow(2,16)); // resolution 16 bits -> 4mm. 
   bool target_detected=false;
-  PointCloud::Ptr point_cloud (new PointCloud);
-  PointCloud::Ptr cloud (new PointCloud);
+  
 
-  point_cloud->width = img_range.cols; 
-  point_cloud->height = img_range.rows;
-  point_cloud->is_dense = false;
-  point_cloud->points.resize (point_cloud->width * point_cloud->height);
-  uint num_pix = 0;
-
+  bool new_obs;
   uint num_dasiam_detection = dasiam_msg->bounding_boxes.size();
 
-  vector<Eigen::Vector2d> observations(0);
-  Eigen::Vector2d state = Eigen::Vector2d::Zero();
   if (num_dasiam_detection>0){
     //If there are 2 boxes, then the target is backwards, inj the limits of the image.
     detection_msgs::BoundingBox bb;
@@ -180,109 +222,22 @@ void TrackerFilterAlgNode::callback(const ImageConstPtr& in_image,const boost::s
       bb.xmin = dasiam_msg->bounding_boxes[0].xmin;
       bb.xmax = dasiam_msg->bounding_boxes[0].xmax;
     }
-    observations.push_back(boundingBox2point(bb,img_range,data_metrics));
+    Eigen::Vector2d point=boundingBox2point(bb,img_range);
+    ekf::Observation obs; obs.x=point(0); obs.y=point(1);
+    obs.sigma_x=dasiam_msg->bounding_boxes[0].probability; obs.sigma_y=obs.sigma_x;
+    new_obs = ekf->update(obs);
   }
 
   if (yolo_msg->bounding_boxes.size()>0){
     detection_msgs::BoundingBox bb=yolo_msg->bounding_boxes[0];
-    observations.push_back(boundingBox2point(bb,img_range,data_metrics));
-  }
-  
-  int count=0;
-  for(auto obs:observations){
-    Eigen::Vector2d diff=obs-prev_state;
-    //Reject outliers
-    if(!flag_tracking || sqrt(diff(0)*diff(0)+diff(1)*diff(1))<config_.max_traslation){
-      state+=obs; count++;
-    }
+    Eigen::Vector2d point=boundingBox2point(bb,img_range);
+    ekf::Observation obs; obs.x=point(0); obs.y=point(1);
+    obs.sigma_x=yolo_msg->bounding_boxes[0].probability; obs.sigma_y=obs.sigma_x;
+    new_obs = new_obs || ekf->update(obs);
   }
 
-  if(count>0){
-    state=state/count;
-    //depth_ave = depth_ave/cont_pix;
-    // std::cout<<"Depth average: "<<depth_ave << " median: "<<median << "Punto medio: "<<p_med<< std::endl;  
-    // std::cout<<"Goal x: "<<goal_x<<" Y: "<<goal_y<<" Z: "<<z<<std::endl;
-    for (uint iy = 0;iy<img_range.rows; iy++){
-      for (uint ix = 0;ix<img_range.cols; ix++){        
-
-        // recosntruccion de la nube de puntos
-        if (data_metrics(iy,ix)==0)
-          continue;
-
-        float ang_h = 22.5 - (45.0/128.0)*iy;
-        ang_h = ang_h*M_PI/180.0;
-        float ang_w = 184.0 - (360.0/2048.0)*ix;
-        ang_w = ang_w*M_PI/180.0;
-
-        float z = data_metrics(iy,ix) * sin(ang_h);
-        float y = sqrt(pow(data_metrics(iy,ix),2)-pow(z,2))*sin(ang_w);
-        float x = sqrt(pow(data_metrics(iy,ix),2)-pow(z,2))*cos(ang_w);
-
-        point_cloud->points[num_pix].x = x;
-        point_cloud->points[num_pix].y = y;
-        point_cloud->points[num_pix].z = z;
-        //Remove points of the target.
-        if (sqrt(pow(x-state(0),2)+pow(y-state(1),2))>config_.filter_radious){          
-          cloud->push_back(point_cloud->points[num_pix]); 
-        }
-        num_pix++; 
-      }
-    }
-    std::vector<int> indices;
-    pcl::removeNaNFromPointCloud(*cloud, *pointCloud_msg, indices);
-    last_detection=ros::Time::now().toSec(); flag_tracking=true;
-    prev_state=state;
-  }
-  
-  //Track the target in the point cloud.
-  else{
-    //The target is lost, and as there isn't localization, the robot have to stop slowly.
-    double t=ros::Time::now().toSec()-last_detection;
-    //Check for prevent errors in case rosbag fails (only simulations)
-    t=min(t,config_.search_time);
-    state=prev_state*(1-pow((t/config_.search_time),3));
-
-    for (uint iy = 0;iy<img_range.rows; iy++){
-      for (uint ix = 0;ix<img_range.cols; ix++){        
-
-        // recosntruccion de la nube de puntos
-        if (data_metrics(iy,ix)==0)
-          continue;
-
-        float ang_h = 22.5 - (45.0/128.0)*iy;
-        ang_h = ang_h*M_PI/180.0;
-        float ang_w = 184.0 - (360.0/2048.0)*ix;
-        ang_w = ang_w*M_PI/180.0;
-
-        float z = data_metrics(iy,ix) * sin(ang_h);
-        float y = sqrt(pow(data_metrics(iy,ix),2)-pow(z,2))*sin(ang_w);
-        float x = sqrt(pow(data_metrics(iy,ix),2)-pow(z,2))*cos(ang_w);
-        point_cloud->points[num_pix].x = x;
-        point_cloud->points[num_pix].y = y;
-        point_cloud->points[num_pix].z = z;
-        if(sqrt(pow(x-state(0),2)+pow(y-state(1),2))>config_.filter_radious){
-          cloud->push_back(point_cloud->points[num_pix]);
-        }
-        num_pix++;
-      }
-    }
-    std::vector<int> indices;
-    pcl::removeNaNFromPointCloud(*cloud, *pointCloud_msg, indices);
-    if(sqrt(state(0)*state(0)+state(1)-state(1))<0.01) flag_tracking=false;
-  }
-
-  pointCloud_msg->is_dense = true;
-  pointCloud_msg->width = (int) pointCloud_msg->points.size();
-  pointCloud_msg->height = 1;
-  pointCloud_msg->header.frame_id = "os_sensor";
-  ros::Time time_st = ros::Time::now(); // Para PCL se debe modificar el stamp y no se puede usar directamente el del topic de entrada
-  pointCloud_msg->header.stamp = time_st.toNSec()/1e3;
-  pc_filtered_pub.publish (pointCloud_msg);
-
-  geometry_msgs::PoseWithCovarianceStamped goal_msg;
-  goal_msg.header.stamp=time_st; goal_msg.header.frame_id= "os_sensor";
-  goal_msg.pose.pose.position.x=state(0); goal_msg.pose.pose.position.y=state(1);
-  goal_pub.publish(goal_msg);
+  Eigen::Matrix<double, 2, 1> state; Eigen::Matrix<double, 2, 2> covariance;
+  ekf->getStateAndCovariance(state,covariance);
 
   detection_msgs::BoundingBox search_bbox;
   if(!flag_tracking){
@@ -294,19 +249,37 @@ void TrackerFilterAlgNode::callback(const ImageConstPtr& in_image,const boost::s
     
     search_bbox.ymin=0; search_bbox.ymax=img_range.rows;
     float ang_w=atan2(state(1),state(0));
-
-    float ang_wmin=atan2(state(1)+config_.max_traslation*cos(ang_w),state(0)-config_.filter_radious*sin(ang_w));
+    float ang_wmin=atan2(state(1)+(config_.filter_radious+covariance(1,1))*cos(ang_w),state(0)-(config_.filter_radious+covariance(0,0))*sin(ang_w));
     ang_wmin = ang_wmin*180.0/M_PI;
-    search_bbox.xmin = int((180 - ang_wmin)*(2048.0/360.0));
+    search_bbox.xmin = int((184 - ang_wmin)*(2048.0/360.0));
 
-    float ang_wmax=atan2(state(1)-config_.max_traslation*cos(ang_w),state(0)+config_.filter_radious*sin(ang_w));
+    float ang_wmax=atan2(state(1)-(config_.filter_radious+covariance(1,1))*cos(ang_w),state(0)+(config_.filter_radious+covariance(0,0))*sin(ang_w));
     ang_wmax = ang_wmax*180.0/M_PI;
-    search_bbox.xmax = int((180 - ang_wmax)*(2048.0/360.0));
+    search_bbox.xmax = int((184 - ang_wmax)*(2048.0/360.0));
     if(search_bbox.xmin>search_bbox.xmax) search_bbox.xmin-=img_range.cols;
+    //We use the 'probability' field to pass the covariance.
+    search_bbox.probability=(covariance(0,0)+covariance(1,1))/2;
   }
+
+   if(new_obs){
+    last_detection=ros::Time::now().toSec(); flag_tracking=true;
+    last_state=state;
+  }
+  else if(sqrt(state(0)*state(0)+state(1)*state(1))<0.01){
+    flag_tracking=false; ekf->flag_ekf_initialised_=false;
+  }
+  auto time_st=ros::Time::now();
   detection_msgs::BoundingBoxes search_msg; search_msg.header=dasiam_msg->header;
   search_msg.header.stamp=time_st; search_msg.bounding_boxes.push_back(search_bbox);
   searchBB_pub.publish(search_msg);
+
+  geometry_msgs::PoseWithCovarianceStamped goal_msg;
+  goal_msg.header.stamp=time_st; goal_msg.header.frame_id= "os_sensor";
+  goal_msg.pose.pose.position.x=state(0); goal_msg.pose.pose.position.y=state(1);
+  goal_msg.pose.covariance[0]=covariance(0,0); goal_msg.pose.covariance[7]=covariance(1,1);
+  goal_msg.pose.covariance[14]=1;  
+  goal_pub.publish(goal_msg);
+
 }
 
 int TrackerFilterAlgNode::remap(int x, int limit){
@@ -325,6 +298,12 @@ void TrackerFilterAlgNode::node_config_update(Config &config, uint32_t level)
   this->alg_.lock();
   if(config.rate!=this->getRate())
     this->setRate(config.rate);
+  if(config.max_traslation!=this->config_.max_traslation ||
+    config.x_model!=config_.x_model || config.y_model!=config_.y_model){
+    ekf::KalmanConfiguration ekf_config; ekf_config.outlier_mahalanobis_threshold=config.max_traslation;
+    ekf_config.x_model=config.x_model; ekf_config.y_model=config.y_model;
+    ekf->set_config(ekf_config);
+  }
   this->config_=config;
   this->alg_.unlock();
 }

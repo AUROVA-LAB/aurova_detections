@@ -11,10 +11,11 @@
     <arg name="half"                  default="false"/>
 
     <!-- Tracker configuration -->
-    <arg name="detect_frequency"      default="2"/>
-    <arg name="search_time"           default="5"/>
-    <arg name="threshold_tracker"     default="0.5"/>
+    <arg name="detect_frequency"      default="5"/>
+    <arg name="search_time"           default="3"/>
+    <arg name="threshold_tracker"     default="0.65"/>
     <arg name="threshold_search"      default="0.6"/>
+    <arg name="limit_covariance"      default="5.0"/>
     
     <!-- replace imgsz -->
     <arg name="inference_size_h"      default="128"/>
@@ -58,6 +59,7 @@
         <param name="search_time"           value="$(arg search_time)"/>
         <param name="threshold_tracker"     value="$(arg threshold_tracker)"/>
         <param name="threshold_search"      value="$(arg threshold_search)"/>
+        <param name="limit_covariance"      value="$(arg limit_covariance)"/>
     </node>
     <!-- <include file="$(find camera_launch)/launch/d435.launch"/> -->
 

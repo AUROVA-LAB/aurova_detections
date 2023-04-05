@@ -41,8 +41,53 @@ from utils.augmentations import letterbox
 
 
 @torch.no_grad()
-class Yolov5Tracker:
+class Tracker_Base:
     def __init__(self):
+        self.bbox=BoundingBox(); self.bb_msg=[]
+        self.net=None; self.covariance=None
+        self.img_size=None
+
+    def draw_rectangles(self,im_output, color=(255,0,0)):
+        self.bbox.ymin=max(0,self.bbox.ymin); self.bbox.ymax=min(self.img_size[1],self.bbox.ymax)
+        if self.bbox.xmin<0:
+            if self.bbox.xmax<0:
+                aux=copy(self.bbox); aux.xmin+=self.img_size[0]; aux.xmax+=self.img_size[0]
+                aux.xmin=int(aux.xmin);aux.xmax=int(aux.xmax);aux.ymin=int(aux.ymin);aux.ymax=int(aux.ymax)
+                self.bb_msg.append(aux)
+                cv2.rectangle(im_output, (aux.xmin, aux.ymin), (aux.xmax, aux.ymax), color, 2, 1)
+            else:
+                aux=copy(self.bbox); aux.xmin+=self.img_size[0]; aux.xmax=self.img_size[0]
+                aux.xmin=int(aux.xmin);aux.xmax=int(aux.xmax);aux.ymin=int(aux.ymin);aux.ymax=int(aux.ymax)
+                self.bb_msg.append(aux)
+                aux2=copy(self.bbox); aux2.xmin=0
+                aux2.xmin=int(aux2.xmin);aux2.xmax=int(aux2.xmax);aux2.ymin=int(aux2.ymin);aux2.ymax=int(aux2.ymax)
+                self.bb_msg.append(aux2)
+                cv2.rectangle(im_output, (aux.xmin, aux.ymin), (aux.xmax, aux.ymax), color, 2, 1)
+                cv2.rectangle(im_output, (aux2.xmin, aux2.ymin), (aux2.xmax, aux2.ymax), color, 2, 1)
+        elif self.bbox.xmax>self.img_size[0]:
+            if self.bbox.xmin>self.img_size[0]:
+                aux=copy(self.bbox); aux.xmin-=self.img_size[0]; aux.xmax-=self.img_size[0]
+                aux.xmin=int(aux.xmin);aux.xmax=int(aux.xmax);aux.ymin=int(aux.ymin);aux.ymax=int(aux.ymax)
+                self.bb_msg.append(aux)
+                cv2.rectangle(im_output, (aux.xmin, aux.ymin), (aux.xmax, aux.ymax), color, 2, 1)
+            else:
+                aux=copy(self.bbox); aux.xmin=0; aux.xmax-=self.img_size[0]
+                aux.xmin=int(aux.xmin);aux.xmax=int(aux.xmax);aux.ymin=int(aux.ymin);aux.ymax=int(aux.ymax)
+                self.bb_msg.append(aux)
+                aux2=copy(self.bbox); aux2.xmax=self.img_size[0]
+                aux2.xmin=int(aux2.xmin);aux2.xmax=int(aux2.xmax);aux2.ymin=int(aux2.ymin);aux2.ymax=int(aux2.ymax)
+                self.bb_msg.append(aux2)
+                cv2.rectangle(im_output, (aux.xmin, aux.ymin), (aux.xmax, aux.ymax), color, 2, 1)
+                cv2.rectangle(im_output, (aux2.xmin, aux2.ymin), (aux2.xmax, aux2.ymax), color, 2, 1)
+        else:
+            aux=copy(self.bbox)
+            aux.xmin=int(aux.xmin);aux.xmax=int(aux.xmax);aux.ymin=int(aux.ymin);aux.ymax=int(aux.ymax)
+            self.bb_msg.append(aux)
+            cv2.rectangle(im_output, (self.bbox.xmin, self.bbox.ymin), (self.bbox.xmax, self.bbox.ymax), color, 2, 1)
+
+class FusionTracker:
+    def __init__(self):
+        self.yolo_tracker=Tracker_Base(); self.dasiam_tracker=Tracker_Base()
         print("Starting initilization.")
         self.conf_thres = rospy.get_param("~confidence_threshold")
         self.iou_thres = rospy.get_param("~iou_threshold")
@@ -55,32 +100,33 @@ class Yolov5Tracker:
         weights = rospy.get_param("~weights")
         # Initialize model
         self.device = select_device(str(rospy.get_param("~device","")))
-        self.model = DetectMultiBackend(weights, device=self.device, dnn=rospy.get_param("~dnn"))
+        self.yolo_tracker.net = DetectMultiBackend(weights, device=self.device, dnn=rospy.get_param("~dnn"))
         self.stride, self.names, self.pt, self.jit, self.onnx, self.engine = (
-            self.model.stride,
-            self.model.names,
-            self.model.pt,
-            self.model.jit,
-            self.model.onnx,
-            self.model.engine,
+            self.yolo_tracker.net.stride,
+            self.yolo_tracker.net.names,
+            self.yolo_tracker.net.pt,
+            self.yolo_tracker.net.jit,
+            self.yolo_tracker.net.onnx,
+            self.yolo_tracker.net.engine,
         )
 
         # Setting inference size
         self.img_size = [rospy.get_param("~inference_size_w", 2048), rospy.get_param("~inference_size_h",128)]
         self.img_size = check_img_size(self.img_size, s=self.stride)
+        self.yolo_tracker.img_size=self.img_size; self.dasiam_tracker.img_size=self.img_size
 
         # Half
         self.half = rospy.get_param("~half", False)      
         self.half &= self.pt and self.device.type != 'cpu'
 
         if self.pt:
-            self.model.model.half() if self.half else self.model.model.float()
+            self.yolo_tracker.net.half() if self.half else self.yolo_tracker.net.float()
         else:
             half = False
             bs = 1  # export.py models default to batch-size 1
             self.device = torch.device('cpu')
         cudnn.benchmark = True  # set True to speed up constant image size inference
-        self.model(torch.zeros(1, 4, *self.img_size).to(self.device).type_as(next(self.model.model.parameters())))
+        self.yolo_tracker.net(torch.zeros(1, 4, *self.img_size).to(self.device).type_as(next(self.yolo_tracker.net.parameters())))
 
         # Set up tracker.
         params = cv2.TrackerDaSiamRPN_Params()
@@ -89,14 +135,16 @@ class Yolov5Tracker:
         params.kernel_cls1="/home/ros_ws/src/yolov5_ros/models/dasiamrpn_kernel_cls1.onnx"
         params.kernel_r1="/home/ros_ws/src/yolov5_ros/models/dasiamrpn_kernel_r1.onnx"
         params.model="/home/ros_ws/src/yolov5_ros/models/dasiamrpn_model.onnx"
-        self.tracker=cv2.TrackerDaSiamRPN_create(params)
+        self.dasiam_tracker.net=cv2.TrackerDaSiamRPN_create(params)
         self.augment=100
         detect_frequency=rospy.get_param("~detect_frequency", 2.0) #Frequency to use Yolo to detect the target and compare with tracker.
         self.detect_period=1.0/detect_frequency
         self.search_time=rospy.get_param("~search_time", 2.0) #Search during 2 seconds before changing mode
         self.threshold_tracker=rospy.get_param("~threshold_tracker", 0.4) #Minimum correlation to consider a detected target as a possible target.
-        self.threshold_search=rospy.get_param("~threshold_search", 0.6) #More restrictive to re-identify the target during search mode
+        # self.threshold_search=rospy.get_param("~threshold_search", 0.6) #More restrictive to re-identify the target during search mode
         self.aug_per=rospy.get_param("~search_augmentation_percentage", 0.1) #More restrictive to re-identify the target during search mode
+        #If the target is lost by YOLO and the covariance of the ekf filter is greater than this value, chanbe to select mode.
+        self.limit_covariance=rospy.get_param("~limit_covariance", 5.0) 
 
         self.output_video_dir=rospy.get_param("~output_video_dir", 0.1) #More restrictive to re-identify the target during search mode
         # Define the operation modes
@@ -107,13 +155,14 @@ class Yolov5Tracker:
         self.search_area=BoundingBox()
         self.search_area.xmin=0; self.search_area.xmax=self.img_size[0]
         self.search_area.ymin=0; self.search_area.ymax=self.img_size[1]
+        self.target_covariance=0.0
         #Time measure
         self.detect_t=0; self.track_t=0; self.search_t=0
 
         # start main thread
         self.thread = Thread(target = main_thread, args = (self, ))
         self.thread.start()     
-        self.reset_dasaim=False  
+        self.reset_dasiam=False  
         
         # Initialize subscriber to Image/CompressedImage topic
         input_image_type, input_image_topic, _ = get_topic_type(rospy.get_param("~input_image_topic"), blocking = True)
@@ -154,7 +203,7 @@ class Yolov5Tracker:
         if len(im.shape) == 3:
             im = im[None]  # expand for batch dim
 
-        pred = self.model(im, augment=False, visualize=False)
+        pred = self.yolo_tracker.net(im, augment=False, visualize=False)
         pred = non_max_suppression(
             pred, self.conf_thres, self.iou_thres, self.classes, self.agnostic_nms, max_det=self.max_det
         )
@@ -209,26 +258,7 @@ class Yolov5Tracker:
             i+=1
         for bbox in bounding_boxes:
             # #Select decision
-
-            ### The first bounding_box that is near the robot(only debug) ###
-            # if bbox.ymax-bbox.ymin<60: continue
-            # self.bbox=bbox
-            # # Calculate histogram of the segmented person
-            # segment_frame, mask=self.segment_person(im,bbox)
-            # self.target_descriptor=self.histogramPartsBody(segment_frame, mask)
-            # self.operation_mode=self.TRACK_MODE; self.tracker_mode=self.TRACKER_NORMAL
-            # self.tracker_start=rospy.get_time()
-            # s,n,r,depth=cv2.split(im)
-            # frame=cv2.merge([s,n,r])
-            # self.prev_frame=frame
-            # #Change to x,y,(top point)w,h(width,heigth) format for opencv
-            # self.bbox_tracker=[self.bbox.xmin, self.bbox.ymin, self.bbox.xmax-self.bbox.xmin, self.bbox.ymax-self.bbox.ymin]
-            # self.tracker.init(frame, self.bbox_tracker)
-            # #draw bounding box
-            # self.draw_rectangles((0,0,0))
-            # break
-
-            ### A person who have been in front of the robot for 5 seconds. ###
+            ### A person who have been in front of the robot for 3 seconds. ###
             segment_frame, mask=self.segment_person(im,bbox)
             descriptor=self.histogramPartsBody(segment_frame, mask)
             match=False
@@ -241,18 +271,20 @@ class Yolov5Tracker:
                             match=True
                             if now-self.saved_selection[i]["time"]>self.saved_selection[i]["count"]+1:
                                 self.saved_selection[i]["count"]+=1
-                                if self.saved_selection[i]["count"]==3:   
-                                    self.bbox=bbox; self.target_descriptor=descriptor         
+                                if self.saved_selection[i]["count"]==1:   
+                                    self.yolo_tracker.bbox=bbox; self.target_descriptor=descriptor 
+                                    self.dasiam_tracker.bbox=bbox        
                                     self.operation_mode=self.TRACK_MODE; self.tracker_mode=self.TRACKER_NORMAL
                                     self.tracker_start=rospy.get_time()
                                     s,n,r,depth=cv2.split(im)
                                     frame=cv2.merge([s,n,r])
-                                    self.prev_frame=frame
+                                    self.prev_frame=frame; self.search_start=rospy.get_time()
                                     #Change to x,y,(top point)w,h(width,heigth) format for opencv
-                                    self.bbox_tracker=[self.bbox.xmin, self.bbox.ymin, self.bbox.xmax-self.bbox.xmin, self.bbox.ymax-self.bbox.ymin]
-                                    self.tracker.init(frame, self.bbox_tracker)
+                                    self.dasiam_tracker.bbxywh =[bbox.xmin, bbox.ymin, bbox.xmax-bbox.xmin, bbox.ymax-bbox.ymin]
+                                    self.dasiam_tracker.net.init(frame, self.dasiam_tracker.bbxywh)
                                     #draw bounding box
-                                    self.draw_rectangles(self.bbox,self.bounding_boxes_yolo,(0,0,0))
+                                    self.yolo_tracker.draw_rectangles(self.im_output,(0,0,0))
+                                    self.yolo_tracker.covariance=0.1 #The first detection has low covariance.
                                     self.saved_selection=[]
                             break
             
@@ -260,43 +292,42 @@ class Yolov5Tracker:
                     thisdict = {"bbox":bbox, "descriptor":descriptor, "time":now, "count":0}
                     self.saved_selection.append(thisdict)
 
-    def search_mode(self, im):
-        start=rospy.get_time()
-        best_corr=0
-        bounding_boxes = self.detectYolo5v(im.copy())
-        for bbox in bounding_boxes:
-            if self.get_iou(bbox,self.search_area)>0:
-                segment_frame, mask=self.segment_person(im,bbox)
-                descriptor=self.histogramPartsBody(segment_frame, mask)
-                corr=cv2.compareHist(self.target_descriptor,descriptor,cv2.HISTCMP_CORREL)
-                # cv2.rectangle(self.im_output, (bbox.xmin, bbox.ymin), (bbox.xmax, bbox.ymax), (0,0,0), 2, 1)
-                # cv2.putText(self.im_output, f'{corr:.2f}',(bbox.xmin, bbox.ymin+10),cv2.FONT_HERSHEY_SIMPLEX,0.7,(0,0,255))
-                if corr>self.threshold_search and corr>best_corr:
-                    best_corr=corr; best_bbox=bbox; best_descriptor=descriptor
-        end=rospy.get_time()
-        if best_corr>0:
-            self.bbox=best_bbox
-            s,n,r,depth=cv2.split(im)
-            frame=cv2.merge([s,n,r])
-            #Change to x,y,(top point)w,h(width,heigth) format for opencv
-            self.bbox_tracker=[self.bbox.xmin, self.bbox.ymin, self.bbox.xmax-self.bbox.xmin, self.bbox.ymax-self.bbox.ymin]
-            self.tracker.init(frame, self.bbox_tracker); self.prev_frame=frame
-            self.tracker_mode=self.TRACKER_NORMAL; self.operation_mode=self.TRACK_MODE
-            self.tracker_start=rospy.get_time()
-            self.draw_rectangles(best_bbox,self.bounding_boxes_yolo,(0,255,0))
-            # Update descriptor
-            self.target_descriptor=self.target_descriptor*0.5+best_descriptor*0.5
-        elif rospy.get_time()-self.tracker_start<self.detect_period: self.track_target(im); self.increase_search()
-        elif rospy.get_time()-self.search_start>self.search_time: self.operation_mode=self.SELECT_TARGET_MODE
-        self.search_t=end-start if self.search_t==0 else (self.search_t+end-start)/2
+    # def search_mode(self, im):
+    #     start=rospy.get_time()
+    #     best_corr=0
+    #     bounding_boxes = self.detectYolo5v(im.copy())
+    #     for bbox in bounding_boxes:
+    #         if self.get_iou(bbox,self.search_area)>0:
+    #             segment_frame, mask=self.segment_person(im,bbox)
+    #             descriptor=self.histogramPartsBody(segment_frame, mask)
+    #             corr=cv2.compareHist(self.target_descriptor,descriptor,cv2.HISTCMP_CORREL)
+    #             # cv2.rectangle(self.im_output, (bbox.xmin, bbox.ymin), (bbox.xmax, bbox.ymax), (0,0,0), 2, 1)
+    #             # cv2.putText(self.im_output, f'{corr:.2f}',(bbox.xmin, bbox.ymin+10),cv2.FONT_HERSHEY_SIMPLEX,0.7,(0,0,255))
+    #             if corr>self.threshold_search and corr>best_corr:
+    #                 best_corr=corr; best_bbox=bbox; best_descriptor=descriptor
+    #     end=rospy.get_time()
+    #     if best_corr>0:
+    #         self.bbox=best_bbox
+    #         s,n,r,depth=cv2.split(im)
+    #         frame=cv2.merge([s,n,r])
+    #         #Change to x,y,(top point)w,h(width,heigth) format for opencv
+    #         self.bbox_tracker=[self.bbox.xmin, self.bbox.ymin, self.bbox.xmax-self.bbox.xmin, self.bbox.ymax-self.bbox.ymin]
+    #         self.dasiam_tracker.net.init(frame, self.bbox_tracker); self.prev_frame=frame
+    #         self.tracker_mode=self.TRACKER_NORMAL; self.operation_mode=self.TRACK_MODE
+    #         self.tracker_start=rospy.get_time()
+    #         self.draw_rectangles(best_bbox,self.bounding_boxes_yolo,(0,255,0))
+    #         # Update descriptor
+    #         self.target_descriptor=self.target_descriptor*0.5+best_descriptor*0.5
+    #     elif rospy.get_time()-self.tracker_start<self.detect_period: self.track_target(im); self.increase_search()
+    #     elif rospy.get_time()-self.search_start>self.search_time: self.operation_mode=self.SELECT_TARGET_MODE
+    #     self.search_t=end-start if self.search_t==0 else (self.search_t+end-start)/2
 
-    def track_mode(self, im):
-        self.track_target(im)
-
-        if rospy.get_time()-self.tracker_start>self.detect_period:
+    def track_yolo(self, im):
+        # if rospy.get_time()-self.tracker_start>self.detect_period:
             start=rospy.get_time()
             best_corr=0
             bounding_boxes = self.detectYolo5v(im.copy())
+            candidate=None; best_iou=0
             for bbox in bounding_boxes:
                 iou=self.get_iou(bbox,self.search_area)
                 if iou>0:
@@ -310,35 +341,37 @@ class Yolov5Tracker:
                         corr+=iou/2
                         if corr>best_corr:
                             best_corr=corr; best_bbox=bbox; best_descriptor=descriptor
+                    elif iou>best_iou: candidate=bbox
             end=rospy.get_time()
             if best_corr>0:
                 self.search_start=rospy.get_time(); self.tracker_start=rospy.get_time()
-                self.draw_rectangles(best_bbox,self.bounding_boxes_yolo,(0,0,255))
+                #Use the intersection with the previous bounding box to calculate the covariance.
+                #We use the actuar target covariance because a higher covariance in the target will 
+                #produce a higher search are and therefore more desviation.
+                self.yolo_tracker.covariance=self.target_covariance*(1.0-self.get_iou(best_bbox,self.yolo_tracker.bbox))+0.1
+                self.yolo_tracker.bbox=best_bbox
+                self.yolo_tracker.draw_rectangles(self.im_output,(0,0,255))
                 # Update descriptor
                 self.target_descriptor=self.target_descriptor*0.5+best_descriptor*0.5
-                #Change to x,y,(top left point)w,h(width,heigth) format for opencv
-                #In case they don't match, trust in the yolo prediction.
-                if self.reset_dasaim or self.get_iou(best_bbox,self.bbox)<0.75:
-                    self.bbox=best_bbox
+                if self.reset_dasiam or self.get_iou(self.yolo_tracker.bbox,self.dasiam_tracker.bbox)<0.25:
+                    print("Reset",rospy.get_time())
+                    self.dasiam_tracker.bbox=best_bbox
                     s,n,r,depth=cv2.split(im)
                     frame=cv2.merge([s,n,r])
-                    self.bbox_tracker=[self.bbox.xmin, self.bbox.ymin, self.bbox.xmax-self.bbox.xmin, self.bbox.ymax-self.bbox.ymin]
-                    self.tracker.init(frame, self.bbox_tracker); self.prev_frame=frame
-                    self.tracker_mode=self.TRACKER_NORMAL; self.reset_dasaim=False
+                    #Change to x,y,(top left point)w,h(width,heigth) format for opencv
+                    self.dasiam_tracker.bbxywh=[best_bbox.xmin, best_bbox.ymin, best_bbox.xmax-best_bbox.xmin, best_bbox.ymax-best_bbox.ymin]
+                    self.dasiam_tracker.net.init(frame, self.dasiam_tracker.bbxywh); self.prev_frame=frame
+                    self.tracker_mode=self.TRACKER_NORMAL; self.reset_dasiam=False
                     
 
-            elif rospy.get_time()-self.search_start>self.search_time:
-                #Detect if the target of DaSiamRPN is a person.
-                for bbox in bounding_boxes:
-                    iou=self.get_iou(bbox,self.bbox)
-                    if iou>best_corr:
-                        best_corr=iou; best_bbox=bbox
-                    end=rospy.get_time()
-                if best_corr>0:
+            elif rospy.get_time()-self.search_start>self.search_time and candidate is not None:
+                if self.target_covariance<self.limit_covariance:
                     self.search_start=rospy.get_time(); self.tracker_start=rospy.get_time()
-                    self.draw_rectangles(best_bbox,self.bounding_boxes_yolo,(0,0,255))
+                    self.yolo_tracker.bbox=candidate
+                    self.yolo_tracker.covariance=self.target_covariance
+                    self.yolo_tracker.draw_rectangles(self.im_output,(0,0,255))
                     # New descriptor
-                    segment_frame, mask=self.segment_person(im,best_bbox)
+                    segment_frame, mask=self.segment_person(im,candidate)
                     self.target_descriptor=self.histogramPartsBody(segment_frame, mask)
                 else:
                     #Select mode
@@ -346,62 +379,67 @@ class Yolov5Tracker:
             self.detect_t=end-start if self.detect_t==0 else (self.detect_t+end-start)/2
 
 
-    def track_target(self, im,):
+
+    def track_dasiam(self, im,):
         start=rospy.get_time()        
         s,n,r,depth=cv2.split(im)
         frame=cv2.merge([s,n,r])
         copy_frame=frame.copy()
         # Taking account that the image is 360 degrees.
-        if self.bbox.xmin<self.augment:
+        search_area=copy(self.search_area)
+        if self.dasiam_tracker.bbox.xmin<self.augment:
             copy_frame[:,:self.augment]=frame[:,-self.augment:]
             copy_frame[:,self.augment:]=frame[:,:-self.augment]
+            search_area.xmin+=self.augment; search_area.xmax+=self.augment
             if self.tracker_mode!=self.TRACKER_LEFT:
                 prev_copy=self.prev_frame.copy()
                 prev_copy[:,:self.augment]=self.prev_frame[:,-self.augment:]
                 prev_copy[:,self.augment:]=self.prev_frame[:,:-self.augment]
-                self.bbox_tracker[0]+=self.augment
-                self.tracker.init(prev_copy,self.bbox_tracker)
+                self.dasiam_tracker.bbxywh[0]+=self.augment
+                self.dasiam_tracker.net.init(prev_copy,self.dasiam_tracker.bbxywh)
             self.tracker_mode=self.TRACKER_LEFT
 
-        elif self.bbox.xmax>self.img_size[0]-self.augment:
+        elif self.dasiam_tracker.bbox.xmax>self.img_size[0]-self.augment:
             copy_frame[:,-self.augment:]=frame[:,:self.augment]
             copy_frame[:,:-self.augment]=frame[:,self.augment:]
+            search_area.xmin-=self.augment; search_area.xmax-=self.augment
             if self.tracker_mode!=self.TRACKER_RIGHT:
                 prev_copy=self.prev_frame.copy()
                 prev_copy[:,-self.augment:]=self.prev_frame[:,:self.augment]
                 prev_copy[:,:-self.augment]=self.prev_frame[:,self.augment:]
-                self.bbox_tracker[0]-=self.augment
-                self.tracker.init(prev_copy,self.bbox_tracker)   
+                self.dasiam_tracker.bbxywh[0]-=self.augment
+                self.dasiam_tracker.net.init(prev_copy,self.dasiam_tracker.bbxywh)   
             self.tracker_mode=self.TRACKER_RIGHT
 
         elif self.tracker_mode!=self.TRACKER_NORMAL:
             self.tracker_mode=self.TRACKER_NORMAL
-            self.tracker.init(self.prev_frame,self.bbox_tracker)
+            self.dasiam_tracker.net.init(self.prev_frame,self.dasiam_tracker.bbxywh)
 
-
-        ok, self.bbox_tracker = self.tracker.update(copy_frame)
-        self.bbox_tracker=list(self.bbox_tracker)
+        ok, self.dasiam_tracker.bbxywh = self.dasiam_tracker.net.update(copy_frame)
+        self.dasiam_tracker.bbxywh=list(self.dasiam_tracker.bbxywh)
 
         # Bounding box in the original image
-        if self.tracker_mode==self.TRACKER_LEFT: self.bbox_tracker[0]-=self.augment
-        elif self.tracker_mode==self.TRACKER_RIGHT: self.bbox_tracker[0]+=self.augment
+        if self.tracker_mode==self.TRACKER_LEFT: self.dasiam_tracker.bbxywh[0]-=self.augment
+        elif self.tracker_mode==self.TRACKER_RIGHT: self.dasiam_tracker.bbxywh[0]+=self.augment
 
         # Change the side of the image if necessary
-        if self.bbox_tracker[0]+self.bbox_tracker[2]/2<0: self.bbox_tracker[0]+=2048
-        elif self.bbox_tracker[0]+self.bbox_tracker[2]/2>self.img_size[0]: self.bbox_tracker[0]-=self.img_size[0]
+        if self.dasiam_tracker.bbxywh[0]+self.dasiam_tracker.bbxywh[2]/2<0: self.dasiam_tracker.bbxywh[0]+=2048
+        elif self.dasiam_tracker.bbxywh[0]+self.dasiam_tracker.bbxywh[2]/2>self.img_size[0]: self.dasiam_tracker.bbxywh[0]-=self.img_size[0]
 
         #Change to x,y,(top left point) x,y (bottom right point)
-        self.bbox.xmin=self.bbox_tracker[0]; self.bbox.ymin=self.bbox_tracker[1]
-        self.bbox.xmax=self.bbox_tracker[0]+self.bbox_tracker[2]; self.bbox.ymax=self.bbox_tracker[1]+self.bbox_tracker[3]
+        prev_bbox=copy(self.dasiam_tracker.bbox)
+        self.dasiam_tracker.bbox.xmin=self.dasiam_tracker.bbxywh[0]; self.dasiam_tracker.bbox.ymin=self.dasiam_tracker.bbxywh[1]
+        self.dasiam_tracker.bbox.xmax=self.dasiam_tracker.bbxywh[0]+self.dasiam_tracker.bbxywh[2]; 
+        self.dasiam_tracker.bbox.ymax=self.dasiam_tracker.bbxywh[1]+self.dasiam_tracker.bbxywh[3]
 
         #Possible lost the target, update with Yolo if possible
-        if self.get_iou(self.bbox,self.search_area)==0: self.reset_dasaim=True
+        if self.get_iou(self.dasiam_tracker.bbox,self.search_area)==0: self.reset_dasiam=True
 
 
         # Draw bounding box
         self.prev_frame=frame
-        if ok:
-            self.draw_rectangles(self.bbox,self.bounding_boxes)
+        self.dasiam_tracker.draw_rectangles(self.im_output)
+        self.dasiam_tracker.covariance=self.target_covariance*(1.0-self.get_iou(prev_bbox,self.dasiam_tracker.bbox))+0.1
         
         end=rospy.get_time()
         self.track_t=end-start if self.track_t==0 else (self.track_t+end-start)/2
@@ -418,6 +456,8 @@ class Yolov5Tracker:
 
     def search_area_callback(self, data):
         self.search_area = data.bounding_boxes[0]
+        #We use the 'probability' field to pass the covariance.
+        self.target_covariance=data.bounding_boxes[0].probability
         # self.operation_mode=self.SEARCH_MODE
         # self.search_start=rospy.get_time()
         
@@ -433,44 +473,6 @@ class Yolov5Tracker:
         img = np.ascontiguousarray(img)
 
         return img, img0 
-    
-    def draw_rectangles(self, bbox, bounding_boxes_msg, color=(255,0,0)):
-        bbox.ymin=max(0,bbox.ymin); bbox.ymax=min(self.img_size[1],bbox.ymax)
-        if bbox.xmin<0:
-            if bbox.xmax<0:
-                aux=copy(bbox); aux.xmin+=self.img_size[0]; aux.xmax+=self.img_size[0]
-                aux.xmin=int(aux.xmin);aux.xmax=int(aux.xmax);aux.ymin=int(aux.ymin);aux.ymax=int(aux.ymax)
-                bounding_boxes_msg.append(aux)
-                cv2.rectangle(self.im_output, (aux.xmin, aux.ymin), (aux.xmax, aux.ymax), color, 2, 1)
-            else:
-                aux=copy(bbox); aux.xmin+=self.img_size[0]; aux.xmax=self.img_size[0]
-                aux.xmin=int(aux.xmin);aux.xmax=int(aux.xmax);aux.ymin=int(aux.ymin);aux.ymax=int(aux.ymax)
-                bounding_boxes_msg.append(aux)
-                aux2=copy(bbox); aux2.xmin=0
-                aux2.xmin=int(aux2.xmin);aux2.xmax=int(aux2.xmax);aux2.ymin=int(aux2.ymin);aux2.ymax=int(aux2.ymax)
-                bounding_boxes_msg.append(aux2)
-                cv2.rectangle(self.im_output, (aux.xmin, aux.ymin), (aux.xmax, aux.ymax), color, 2, 1)
-                cv2.rectangle(self.im_output, (aux2.xmin, aux2.ymin), (aux2.xmax, aux2.ymax), color, 2, 1)
-        elif bbox.xmax>self.img_size[0]:
-            if bbox.xmin>self.img_size[0]:
-                aux=copy(bbox); aux.xmin-=self.img_size[0]; aux.xmax-=self.img_size[0]
-                aux.xmin=int(aux.xmin);aux.xmax=int(aux.xmax);aux.ymin=int(aux.ymin);aux.ymax=int(aux.ymax)
-                bounding_boxes_msg.append(aux)
-                cv2.rectangle(self.im_output, (aux.xmin, aux.ymin), (aux.xmax, aux.ymax), color, 2, 1)
-            else:
-                aux=copy(bbox); aux.xmin=0; aux.xmax-=self.img_size[0]
-                aux.xmin=int(aux.xmin);aux.xmax=int(aux.xmax);aux.ymin=int(aux.ymin);aux.ymax=int(aux.ymax)
-                bounding_boxes_msg.append(aux)
-                aux2=copy(bbox); aux2.xmax=self.img_size[0]
-                aux2.xmin=int(aux2.xmin);aux2.xmax=int(aux2.xmax);aux2.ymin=int(aux2.ymin);aux2.ymax=int(aux2.ymax)
-                bounding_boxes_msg.append(aux2)
-                cv2.rectangle(self.im_output, (aux.xmin, aux.ymin), (aux.xmax, aux.ymax), color, 2, 1)
-                cv2.rectangle(self.im_output, (aux2.xmin, aux2.ymin), (aux2.xmax, aux2.ymax), color, 2, 1)
-        else:
-            aux=copy(bbox)
-            aux.xmin=int(aux.xmin);aux.xmax=int(aux.xmax);aux.ymin=int(aux.ymin);aux.ymax=int(aux.ymax)
-            bounding_boxes_msg.append(aux)
-            cv2.rectangle(self.im_output, (bbox.xmin, bbox.ymin), (bbox.xmax, bbox.ymax), color, 2, 1)
 
     def segment_person(self, frame, bbox):
         segment_frame=frame[bbox.ymin:bbox.ymax, bbox.xmin:bbox.xmax]
@@ -583,13 +585,6 @@ class Yolov5Tracker:
             assert iou >= 0.0
             assert iou <= 1.0
             return iou
-        
-    def increase_search(self):
-        width=self.search_area.xmax-self.search_area.xmin
-        height=self.search_area.ymax-self.search_area.ymin
-        self.search_area.xmax+=self.aug_per*width; self.search_area.xmin-=self.aug_per*width
-        self.search_area.ymax=min(self.img_size[1],self.search_area.ymax+self.aug_per*height)
-        self.search_area.ymin=max(0,self.search_area.ymin-self.aug_per*height)
 
     def keyboard_callback(self, input):
         # print("Input: ", input)
@@ -598,7 +593,7 @@ class Yolov5Tracker:
         elif input=='t':
             print("Tracker mean time: ", self.track_t)
             print("Detect mean time: ", self.detect_t)
-            print("Search mean time: ", self.search_t)
+            # print("Search mean time: ", self.search_t)
 
 # Class for reading keyboard input
 class KeyboardThread(Thread):
@@ -622,33 +617,39 @@ class KeyboardThread(Thread):
         finally:
             termios.tcsetattr(fd, termios.TCSAFLUSH, orig)
 
-def main_thread(node: Yolov5Tracker):
+def main_thread(node: FusionTracker):
   while not rospy.is_shutdown():
     if node.flag_select: node.operation_mode=node.SELECT_TARGET_MODE; node.flag_select=False
     if node.flag_image:
-        node.bounding_boxes=[]; node.bounding_boxes_yolo=[]
+        node.yolo_tracker.bb_msg=[]; node.dasiam_tracker.bb_msg=[]
         node.flag_image=False
         node.im_output=node.im.copy()
+        cv2.rectangle(node.im_output, (node.search_area.xmin, node.search_area.ymin),(node.search_area.xmax, node.search_area.xmax), (155,155,0), 2, 1)
         if node.operation_mode==node.SELECT_TARGET_MODE: node.select_mode(node.im.copy())
-        elif node.operation_mode==node.SEARCH_MODE: node.search_mode(node.im.copy())
-        elif node.operation_mode==node.TRACK_MODE: node.track_mode(node.im.copy())
+        # elif node.operation_mode==node.SEARCH_MODE: node.search_mode(node.im.copy())
+        elif node.operation_mode==node.TRACK_MODE: 
+            node.track_dasiam(node.im.copy())
+            node.track_yolo(node.im.copy())
 
         #Publish messages
-        bounding_boxes = BoundingBoxes()
-        bounding_boxes.header = node.data.header
-        bounding_boxes.image_header = node.data.header
-        for bbox in node.bounding_boxes:
-            bbox.probability=1.0
-            bounding_boxes.bounding_boxes.append(bbox) #Append the bounding boxes which are between the limits of the image.
-        node.dasiam_pub.publish(bounding_boxes)
+        bounding_boxes_dasiam = BoundingBoxes()
+        bounding_boxes_dasiam.header = node.data.header
+        bounding_boxes_dasiam.image_header = node.data.header
+        for bbox in node.dasiam_tracker.bb_msg:
+            #We use the 'probability' field to pass the covariance.
+            bbox.probability=node.dasiam_tracker.covariance
+            bounding_boxes_dasiam.bounding_boxes.append(bbox) #Append the bounding boxes which are between the limits of the image.
+        node.dasiam_pub.publish(bounding_boxes_dasiam)
 
         bounding_boxes_yolo = BoundingBoxes()
         bounding_boxes_yolo.header = node.data.header
         bounding_boxes_yolo.image_header = node.data.header
-        for bbox in node.bounding_boxes_yolo:
-            bbox.probability=1.0
+        for bbox in node.yolo_tracker.bb_msg:
+            #We use the 'probability' field to pass the covariance.
+            bbox.probability=node.yolo_tracker.covariance
             bounding_boxes_yolo.bounding_boxes.append(bbox) #Append the bounding boxes which are between the limits of the image.
         node.yolo_pub.publish(bounding_boxes_yolo)
+        
         node.image_pub.publish(node.bridge.cv2_to_imgmsg(node.im_output, "bgra8")) 
       
     node.rate.sleep()
@@ -660,7 +661,7 @@ if __name__ == "__main__":
     
 
     rospy.init_node("tracker", anonymous=True)
-    tracker_node = Yolov5Tracker()
+    tracker_node = FusionTracker()
     kthread = KeyboardThread(tracker_node.keyboard_callback)    
    
     rospy.spin()

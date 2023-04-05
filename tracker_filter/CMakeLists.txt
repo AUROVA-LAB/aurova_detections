@@ -103,7 +103,7 @@ include_directories(
 # add_library(${PROJECT_NAME} <list of source files>)
 
 ## Declare a cpp executable
-add_executable(${PROJECT_NAME} src/tracker_filter_alg.cpp src/tracker_filter_alg_node.cpp)
+add_executable(${PROJECT_NAME} src/tracker_filter_alg.cpp src/tracker_filter_alg_node.cpp src/ekf.cpp)
 
 # ******************************************************************** 
 #                   Add the libraries

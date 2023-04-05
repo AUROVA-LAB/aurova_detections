@@ -63,6 +63,7 @@
 
 #include <detection_msgs/BoundingBox.h>
 #include <detection_msgs/BoundingBoxes.h>
+#include "ekf.h"
 
 #include <pcl/filters/statistical_outlier_removal.h>
 #include <geometry_msgs/PoseWithCovarianceStamped.h>
@@ -97,9 +98,12 @@ class TrackerFilterAlgNode : public algorithm_base::IriBaseAlgorithm<TrackerFilt
     // CEkfPtr ekf;
 
     //Variables
-    bool flag_rate, flag_tracking;
+    bool flag_rate, flag_tracking, flag_image;
     double last_detection;
-    Eigen::Vector2d prev_state;
+    Eigen::Matrix<double, 2, 1> last_state;
+    CEkfPtr ekf;
+    Eigen::MatrixXf data_metrics;
+    uint im_rows,im_cols;
 
    /**
     * \brief config variable
@@ -128,7 +132,7 @@ class TrackerFilterAlgNode : public algorithm_base::IriBaseAlgorithm<TrackerFilt
     void callback(const sensor_msgs::ImageConstPtr& in_image, const detection_msgs::BoundingBoxesConstPtr& yolo,const boost::shared_ptr<const detection_msgs::BoundingBoxes>& dasiam);
     int remap(int x, int limit);
 
-    Eigen::Vector2d boundingBox2point(detection_msgs::BoundingBox& bb, cv::Mat& im_range, const Eigen::Ref<const Eigen::MatrixXf>& data_metrics);
+    Eigen::Vector2d boundingBox2point(detection_msgs::BoundingBox& bb, cv::Mat& im_range);
 
   protected:
    /**
