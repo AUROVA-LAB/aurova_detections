@@ -113,7 +113,7 @@ class TrackerFilterAlgNode : public algorithm_base::IriBaseAlgorithm<TrackerFilt
     CEkfPtr ekf, ground_truth_ekf;
     Eigen::MatrixXf data_metrics;
     uint im_rows,im_cols;
-
+    double time_pointcloud, time_update;
    /**
     * \brief config variable
     *

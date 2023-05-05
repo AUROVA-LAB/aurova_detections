@@ -64,13 +64,15 @@ TrackerFilterAlgNode::TrackerFilterAlgNode(void) :
   searchBB_pub = this->private_node_handle_.advertise<detection_msgs::BoundingBoxes>( "/tracker_filter/search_area", 1 );
 
   pointCloud_msg = PointCloud::Ptr (new PointCloud);
-
+  time_pointcloud=0; time_update=0;
 }
 
 TrackerFilterAlgNode::~TrackerFilterAlgNode(void)
 {
   // [free dynamic memory]
   if(metrics_file.is_open()) metrics_file.close();
+  cout<<"Pointcloud reconstruction mean time"<<time_pointcloud<<endl;
+  cout<<"Update mean time"<<time_update<<endl;
 }
 
 void TrackerFilterAlgNode::mainNodeThread(void)
@@ -137,7 +139,7 @@ void TrackerFilterAlgNode::mainNodeThread(void)
     pointCloud_msg->header.stamp = time_st.toNSec()/1e3;
     pc_filtered_pub.publish (pointCloud_msg);
     double diff = ros::Time::now().toSec()-start;
-    cout<<"Pointcloud reconstruction time"<<diff<<endl;
+    time_pointcloud=diff ? time_pointcloud==0 : (time_pointcloud+diff)/2;
   }
   
   this->alg_.unlock();
@@ -372,7 +374,7 @@ void TrackerFilterAlgNode::callback(const ImageConstPtr& in_image,const boost::s
     gt_pub.publish(gt_msg);
   }
   double diff = ros::Time::now().toSec()-start;
-  cout<<"Updatetime"<<diff<<endl;
+  time_update=diff ? time_update==0 : (time_update+diff)/2;
 }
 
 int TrackerFilterAlgNode::remap(int x, int limit){
