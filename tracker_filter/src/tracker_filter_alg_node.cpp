@@ -71,8 +71,8 @@ TrackerFilterAlgNode::~TrackerFilterAlgNode(void)
 {
   // [free dynamic memory]
   if(metrics_file.is_open()) metrics_file.close();
-  cout<<"Pointcloud reconstruction mean time"<<time_pointcloud<<endl;
-  cout<<"Update mean time"<<time_update<<endl;
+  cout<<"Pointcloud reconstruction mean time "<<time_pointcloud*pow(10,-9)<<endl;
+  cout<<"Update mean time "<<time_update*pow(10,-9)<<endl;
 }
 
 void TrackerFilterAlgNode::mainNodeThread(void)
@@ -101,7 +101,7 @@ void TrackerFilterAlgNode::mainNodeThread(void)
   //Construct the pointcloud
   if(flag_image){
     flag_image=false;
-    double start=ros::Time::now().toSec();
+    auto start=chrono::high_resolution_clock::now();
     PointCloud::Ptr cloud (new PointCloud);
     pointCloud_msg->clear(); // clear data pointcloud
     Eigen::Matrix<double, 2, 1> state; Eigen::Matrix<double, 2, 2> covariance;
@@ -138,8 +138,8 @@ void TrackerFilterAlgNode::mainNodeThread(void)
     ros::Time time_st = ros::Time::now(); // Para PCL se debe modificar el stamp y no se puede usar directamente el del topic de entrada
     pointCloud_msg->header.stamp = time_st.toNSec()/1e3;
     pc_filtered_pub.publish (pointCloud_msg);
-    double diff = ros::Time::now().toSec()-start;
-    time_pointcloud=diff ? time_pointcloud==0 : (time_pointcloud+diff)/2;
+    double diff = chrono::duration_cast<std::chrono::nanoseconds>(chrono::high_resolution_clock::now()-start).count();
+    time_pointcloud=(time_pointcloud+diff)/2.0;
   }
   
   this->alg_.unlock();
@@ -213,7 +213,7 @@ void TrackerFilterAlgNode::callback(const ImageConstPtr& in_image,const boost::s
                                     const boost::shared_ptr<const detection_msgs::BoundingBoxes>& dasiam_msg)
 {
   if(!flag_rate) return;
-  double start=ros::Time::now().toSec();
+  auto start=chrono::high_resolution_clock::now();
   flag_rate=false; flag_image=true;
   cv_bridge::CvImagePtr cv_range;
       try
@@ -373,8 +373,8 @@ void TrackerFilterAlgNode::callback(const ImageConstPtr& in_image,const boost::s
     gt_msg.pose.pose.position.x=last_ground_truth(0); gt_msg.pose.pose.position.y=last_ground_truth(1);
     gt_pub.publish(gt_msg);
   }
-  double diff = ros::Time::now().toSec()-start;
-  time_update=diff ? time_update==0 : (time_update+diff)/2;
+  double diff = chrono::duration_cast<std::chrono::nanoseconds>(chrono::high_resolution_clock::now()-start).count();
+  time_update=(time_update+diff)/2.0;
 }
 
 int TrackerFilterAlgNode::remap(int x, int limit){

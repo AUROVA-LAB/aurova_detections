@@ -11,12 +11,13 @@ import os
 import sys
 from rostopic import get_topic_type
 from copy import copy
-from datetime import datetime
+
 
 from sensor_msgs.msg import Image, CompressedImage
 from detection_msgs.msg import BoundingBox, BoundingBoxes
 from threading import Thread
 import termios, tty
+import time
 
 
 
@@ -324,7 +325,7 @@ class FusionTracker:
 
     def track_yolo(self, im):
         # if rospy.get_time()-self.tracker_start>self.detect_period:
-            start=rospy.get_time()
+            start=time.clock_gettime_ns(time.CLOCK_THREAD_CPUTIME_ID)
             best_corr=0
             bounding_boxes = self.detectYolo5v(im.copy())
             candidate=None; best_corr2=0
@@ -343,7 +344,7 @@ class FusionTracker:
                         if corr>best_corr:
                             best_corr=corr; best_bbox=bbox; best_descriptor=descriptor
                     elif corr>best_corr2: candidate=bbox; best_corr2=corr
-            end=rospy.get_time()
+            
             if best_corr>0:
                 self.search_start=rospy.get_time(); self.tracker_start=rospy.get_time()
                 #Use the intersection with the previous bounding box to calculate the covariance.
@@ -375,13 +376,14 @@ class FusionTracker:
                     self.target_descriptor=self.histogramPartsBody(segment_frame, mask)
                 else:
                     #Select mode
-                    self.operation_mode=self.SELECT_TARGET_MODE   
+                    self.operation_mode=self.SELECT_TARGET_MODE
+            end=time.clock_gettime_ns(time.CLOCK_THREAD_CPUTIME_ID)  
             self.detect_t=end-start if self.detect_t==0 else (self.detect_t+end-start)/2
 
 
 
     def track_dasiam(self, im,):
-        start=rospy.get_time()        
+        start=time.clock_gettime_ns(time.CLOCK_THREAD_CPUTIME_ID)     
         s,n,r,depth=cv2.split(im)
         frame=cv2.merge([s,n,r])
         copy_frame=frame.copy()
@@ -441,7 +443,7 @@ class FusionTracker:
         self.dasiam_tracker.draw_rectangles(self.im_output)
         self.dasiam_tracker.covariance=self.target_covariance*(1.0-self.get_iou(prev_bbox,self.dasiam_tracker.bbox))+0.1
         
-        end=rospy.get_time()
+        end=time.clock_gettime_ns(time.CLOCK_THREAD_CPUTIME_ID)
         self.track_t=end-start if self.track_t==0 else (self.track_t+end-start)/2
                
 
@@ -591,8 +593,8 @@ class FusionTracker:
         if input=='s':
             self.flag_select=True
         elif input=='t':
-            print("DaSiamRPN mean time: ", self.track_t)
-            print("YOLO mean time: ", self.detect_t)
+            print("DaSiamRPN mean time: ", self.track_t*(10**-9))
+            print("YOLO mean time: ", self.detect_t*(10**-9))
             # print("Search mean time: ", self.search_t)
 
 # Class for reading keyboard input
