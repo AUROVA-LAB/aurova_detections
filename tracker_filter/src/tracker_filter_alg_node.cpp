@@ -21,11 +21,32 @@ TrackerFilterAlgNode::TrackerFilterAlgNode(void) :
   this->private_node_handle_.getParam("max_traslation_distance", config_.max_traslation);
   this->private_node_handle_.getParam("filter_radious", config_.filter_radious);
   this->private_node_handle_.getParam("search_time", config_.search_time);
+  this->private_node_handle_.getParam("metrics", metrics);
   
   this->private_node_handle_.getParam("x_model", config_.x_model);
   this->private_node_handle_.getParam("y_model", config_.y_model);
   ekf::KalmanConfiguration ekf_config; ekf_config.outlier_mahalanobis_threshold=config_.max_traslation;
   ekf_config.x_model=config_.x_model; ekf_config.y_model=config_.y_model;
+
+  if(metrics){
+    string label_name, metrics_name;
+    this->private_node_handle_.getParam("label_file", label_name);
+    this->private_node_handle_.getParam("output_file", metrics_name);
+    metrics_file.open(metrics_name,ios::trunc);
+    ifstream label_file(label_name, ios::in);
+    string s;labelData data;
+    while(label_file>>s){
+      data.time=stod(s); label_file>>s;
+      data.ix=stoi(s); label_file>>s;
+      data.iy=stoi(s); label_file>>s;
+      data.ex=stoi(s); label_file>>s;
+      data.ey=stoi(s);
+      ground_truth.push_back(data);
+    }
+    ground_truth_id=0;
+    last_ground_truth(0)=0; last_ground_truth(1)=0;
+    this->ground_truth_ekf = new CEkf(ekf_config);
+  }
 
   this->ekf = new CEkf(ekf_config);
   // this->ekf->setDebug(true);
@@ -39,14 +60,17 @@ TrackerFilterAlgNode::TrackerFilterAlgNode(void) :
   
   pc_filtered_pub = this->private_node_handle_.advertise<PointCloud> ("/ouster_filtered", 1);  
   goal_pub = this->private_node_handle_.advertise<geometry_msgs::PoseWithCovarianceStamped>( "/target", 1 );
+  gt_pub = this->private_node_handle_.advertise<geometry_msgs::PoseWithCovarianceStamped>( "/ground_truth", 1 );
   searchBB_pub = this->private_node_handle_.advertise<detection_msgs::BoundingBoxes>( "/tracker_filter/search_area", 1 );
 
   pointCloud_msg = PointCloud::Ptr (new PointCloud);
+
 }
 
 TrackerFilterAlgNode::~TrackerFilterAlgNode(void)
 {
   // [free dynamic memory]
+  if(metrics_file.is_open()) metrics_file.close();
 }
 
 void TrackerFilterAlgNode::mainNodeThread(void)
@@ -70,9 +94,12 @@ void TrackerFilterAlgNode::mainNodeThread(void)
     t=min(t,config_.search_time);
     ekf->predict(t, config_.search_time, last_state);
   } 
+  if(metrics) ground_truth_ekf->predict(0.0, config_.search_time, last_ground_truth);
   // [publish messages]
   //Construct the pointcloud
   if(flag_image){
+    flag_image=false;
+    double start=ros::Time::now().toSec();
     PointCloud::Ptr cloud (new PointCloud);
     pointCloud_msg->clear(); // clear data pointcloud
     Eigen::Matrix<double, 2, 1> state; Eigen::Matrix<double, 2, 2> covariance;
@@ -109,6 +136,8 @@ void TrackerFilterAlgNode::mainNodeThread(void)
     ros::Time time_st = ros::Time::now(); // Para PCL se debe modificar el stamp y no se puede usar directamente el del topic de entrada
     pointCloud_msg->header.stamp = time_st.toNSec()/1e3;
     pc_filtered_pub.publish (pointCloud_msg);
+    double diff = ros::Time::now().toSec()-start;
+    cout<<"Pointcloud reconstruction time"<<diff<<endl;
   }
   
   this->alg_.unlock();
@@ -182,6 +211,7 @@ void TrackerFilterAlgNode::callback(const ImageConstPtr& in_image,const boost::s
                                     const boost::shared_ptr<const detection_msgs::BoundingBoxes>& dasiam_msg)
 {
   if(!flag_rate) return;
+  double start=ros::Time::now().toSec();
   flag_rate=false; flag_image=true;
   cv_bridge::CvImagePtr cv_range;
       try
@@ -202,11 +232,31 @@ void TrackerFilterAlgNode::callback(const ImageConstPtr& in_image,const boost::s
   bool target_detected=false;
   
 
-  bool new_obs;
+  bool new_obs=false;
   uint num_dasiam_detection = dasiam_msg->bounding_boxes.size();
-
+  detection_msgs::BoundingBox ground_truth_bb;
+  if(metrics){
+    double t=yolo_msg->header.stamp.toSec();
+    
+    //Get actual bounding box
+    while (t>ground_truth[ground_truth_id+1].time){
+      ground_truth_id++;
+      if (ground_truth_id+1==ground_truth.size()){
+        metrics=false; break;
+      }
+    }
+    if(metrics){
+      float w0=1-(t-ground_truth[ground_truth_id].time)/(ground_truth[ground_truth_id+1].time-ground_truth[ground_truth_id].time);
+      float w1=1-(ground_truth[ground_truth_id+1].time-t)/(ground_truth[ground_truth_id+1].time-ground_truth[ground_truth_id].time);
+      ground_truth_bb.xmin=int(ground_truth[ground_truth_id].ix*w0+ground_truth[ground_truth_id+1].ix*w1);
+      ground_truth_bb.ymin=int(ground_truth[ground_truth_id].iy*w0+ground_truth[ground_truth_id+1].iy*w1);
+      ground_truth_bb.xmax=int(ground_truth[ground_truth_id].ex*w0+ground_truth[ground_truth_id+1].ex*w1);
+      ground_truth_bb.ymax=int(ground_truth[ground_truth_id].ey*w0+ground_truth[ground_truth_id+1].ey*w1);
+      metrics_file<<std::fixed<<t<<" ";
+    }
+  } 
   if (num_dasiam_detection>0){
-    //If there are 2 boxes, then the target is backwards, inj the limits of the image.
+    //If there are 2 boxes, then the target is between the boundaries of the image.
     detection_msgs::BoundingBox bb;
     if (num_dasiam_detection==2){
       bb.ymin = dasiam_msg->bounding_boxes[0].ymin;
@@ -226,18 +276,53 @@ void TrackerFilterAlgNode::callback(const ImageConstPtr& in_image,const boost::s
     ekf::Observation obs; obs.x=point(0); obs.y=point(1);
     obs.sigma_x=dasiam_msg->bounding_boxes[0].probability; obs.sigma_y=obs.sigma_x;
     new_obs = ekf->update(obs);
+    if(metrics){
+      //Distance between the center of the bounding boxes.
+      float cx1=ground_truth_bb.xmin+(ground_truth_bb.xmax-ground_truth_bb.xmin)/2.0;
+      float cy1=ground_truth_bb.ymin+(ground_truth_bb.ymax-ground_truth_bb.ymin)/2.0;
+      float cx2=bb.xmin+(bb.xmax-bb.xmin)/2.0;
+      float cy2=bb.ymin+(bb.ymax-bb.ymin)/2.0;
+      metrics_file<<float(sqrt(pow(cx1-cx2,2)+pow(cy1-cy2,2)))<<" ";
+      //Intersection over Union
+      metrics_file<<get_iou(ground_truth_bb,bb)<<" ";
+    }
   }
+  else if(metrics) metrics_file<<"None None ";
 
   if (yolo_msg->bounding_boxes.size()>0){
     detection_msgs::BoundingBox bb=yolo_msg->bounding_boxes[0];
     Eigen::Vector2d point=boundingBox2point(bb,img_range);
     ekf::Observation obs; obs.x=point(0); obs.y=point(1);
     obs.sigma_x=yolo_msg->bounding_boxes[0].probability; obs.sigma_y=obs.sigma_x;
-    new_obs = new_obs || ekf->update(obs);
+    bool ok = ekf->update(obs);
+    new_obs = new_obs || ok;
+    if(metrics){
+      //Distance between the center of the bounding boxes.
+      float cx1=ground_truth_bb.xmin+(ground_truth_bb.xmax-ground_truth_bb.xmin)/2.0;
+      float cy1=ground_truth_bb.ymin+(ground_truth_bb.ymax-ground_truth_bb.ymin)/2.0;
+      float cx2=bb.xmin+(bb.xmax-bb.xmin)/2.0;
+      float cy2=bb.ymin+(bb.ymax-bb.ymin)/2.0;
+      metrics_file<<float(sqrt(pow(cx1-cx2,2)+pow(cy1-cy2,2)))<<" ";
+      //Intersection over Union
+      metrics_file<<get_iou(ground_truth_bb,bb)<<" ";
+    }
   }
+  else if(metrics) metrics_file<<"None None ";
 
   Eigen::Matrix<double, 2, 1> state; Eigen::Matrix<double, 2, 2> covariance;
   ekf->getStateAndCovariance(state,covariance);
+
+  if(metrics){
+    Eigen::Vector2d ground_truth_pose=boundingBox2point(ground_truth_bb,img_range);
+    //Check if the position have sense respect the previous position, that  is the target depth is OK.
+    ekf::Observation obs; obs.x=ground_truth_pose(0); obs.y=ground_truth_pose(1);
+    obs.sigma_x=0.1; obs.sigma_y=0.1;
+    ground_truth_ekf->update(obs);
+    Eigen::Matrix<double, 2, 2> aux;
+    ground_truth_ekf->getStateAndCovariance(ground_truth_pose,aux);
+    last_ground_truth=ground_truth_pose;
+    metrics_file<<sqrt(pow(ground_truth_pose(0)-state(0),2)+pow(ground_truth_pose(1)-state(1),2))<<endl;
+  }
 
   detection_msgs::BoundingBox search_bbox;
   if(!flag_tracking){
@@ -280,6 +365,14 @@ void TrackerFilterAlgNode::callback(const ImageConstPtr& in_image,const boost::s
   goal_msg.pose.covariance[14]=1;  
   goal_pub.publish(goal_msg);
 
+  if(metrics){
+    geometry_msgs::PoseWithCovarianceStamped gt_msg;
+    gt_msg.header.stamp=time_st; gt_msg.header.frame_id= "os_sensor";
+    gt_msg.pose.pose.position.x=last_ground_truth(0); gt_msg.pose.pose.position.y=last_ground_truth(1);
+    gt_pub.publish(gt_msg);
+  }
+  double diff = ros::Time::now().toSec()-start;
+  cout<<"Updatetime"<<diff<<endl;
 }
 
 int TrackerFilterAlgNode::remap(int x, int limit){
@@ -310,6 +403,25 @@ void TrackerFilterAlgNode::node_config_update(Config &config, uint32_t level)
 
 void TrackerFilterAlgNode::addNodeDiagnostics(void)
 {
+}
+
+float TrackerFilterAlgNode::get_iou(detection_msgs::BoundingBox bb1, detection_msgs::BoundingBox bb2){
+
+    int x_left = max(bb1.xmin, bb2.xmin);
+    int y_top = max(bb1.ymin, bb2.ymin);
+    int x_right = min(bb1.xmax, bb2.xmax);
+    int y_bottom = min(bb1.ymax, bb2.ymax);
+
+    if (x_right < x_left || y_bottom < y_top)
+        return 0.0;
+
+    float intersection_area = (x_right - x_left) * (y_bottom - y_top);
+
+    float bb1_area = (bb1.xmax - bb1.xmin) * (bb1.ymax - bb1.ymin);
+    float bb2_area = (bb2.xmax - bb2.xmin) * (bb2.ymax - bb2.ymin);
+
+    float iou = intersection_area / float(bb1_area + bb2_area - intersection_area);
+    return iou;
 }
 
 /* main function */

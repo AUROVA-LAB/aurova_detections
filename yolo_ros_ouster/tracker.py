@@ -327,9 +327,10 @@ class FusionTracker:
             start=rospy.get_time()
             best_corr=0
             bounding_boxes = self.detectYolo5v(im.copy())
-            candidate=None; best_iou=0
+            candidate=None; best_corr2=0
             for bbox in bounding_boxes:
                 iou=self.get_iou(bbox,self.search_area)
+                # cv2.rectangle(self.im_output, (bbox.xmin, bbox.ymin), (bbox.xmax, bbox.ymax), (0,0,0), 2, 1)
                 if iou>0:
                     segment_frame, mask=self.segment_person(im,bbox)
                     descriptor=self.histogramPartsBody(segment_frame, mask)
@@ -341,7 +342,7 @@ class FusionTracker:
                         corr+=iou/2
                         if corr>best_corr:
                             best_corr=corr; best_bbox=bbox; best_descriptor=descriptor
-                    elif iou>best_iou: candidate=bbox
+                    elif corr>best_corr2: candidate=bbox; best_corr2=corr
             end=rospy.get_time()
             if best_corr>0:
                 self.search_start=rospy.get_time(); self.tracker_start=rospy.get_time()
@@ -590,8 +591,8 @@ class FusionTracker:
         if input=='s':
             self.flag_select=True
         elif input=='t':
-            print("Tracker mean time: ", self.track_t)
-            print("Detect mean time: ", self.detect_t)
+            print("DaSiamRPN mean time: ", self.track_t)
+            print("YOLO mean time: ", self.detect_t)
             # print("Search mean time: ", self.search_t)
 
 # Class for reading keyboard input
@@ -647,7 +648,7 @@ def main_thread(node: FusionTracker):
             bbox.probability=node.yolo_tracker.covariance
             bounding_boxes_yolo.bounding_boxes.append(bbox) #Append the bounding boxes which are between the limits of the image.
         node.yolo_pub.publish(bounding_boxes_yolo)
-        
+        # cv2.rectangle(node.im_output,(node.search_area.xmin,node.search_area.ymin),(node.search_area.xmax,node.search_area.ymax), (255,255,0))
         node.image_pub.publish(node.bridge.cv2_to_imgmsg(node.im_output, "bgra8")) 
       
     node.rate.sleep()

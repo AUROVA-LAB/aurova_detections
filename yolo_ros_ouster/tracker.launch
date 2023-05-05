@@ -12,7 +12,7 @@
 
     <!-- Tracker configuration -->
     <arg name="detect_frequency"      default="5"/>
-    <arg name="search_time"           default="3"/>
+    <arg name="search_time"           default="7"/>
     <arg name="threshold_tracker"     default="0.65"/>
     <arg name="threshold_search"      default="0.6"/>
     <arg name="limit_covariance"      default="5.0"/>
@@ -31,7 +31,7 @@
     <arg name="output_image_topic"      default="/yolov5/image_out"/>
     <arg name="output_video_dir"        default="/home/alolivas/aurova-lab/labrobotica/dataset/tracker_output/"/>
 
-    <node pkg="yolov5_ros" name="merge_channels" type="merge_channels_ouster.py"></node>
+    <node pkg="yolov5_ros" name="merge_channels" type="merge_channels_ouster.py" output="screen"></node>
 
     <node pkg="yolov5_ros" name="tracker" type="tracker.py" output="screen">
         <param name="weights"               value="$(arg weights)"/>

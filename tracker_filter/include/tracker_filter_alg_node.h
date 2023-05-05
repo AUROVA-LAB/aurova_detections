@@ -51,6 +51,7 @@
 #include <pcl/registration/icp.h>
 
 #include <iostream>
+#include <fstream>
 #include <math.h>
 
 #include <sensor_msgs/Image.h>
@@ -84,12 +85,18 @@
  *
  */
 
+struct labelData
+{
+  double time;
+  int ix,iy,ex,ey;
+};
+
 class TrackerFilterAlgNode : public algorithm_base::IriBaseAlgorithm<TrackerFilterAlgorithm>
 {
   private:
     typedef pcl::PointCloud<pcl::PointXYZ> PointCloud;
     ros::Publisher pc_filtered_pub; // publisher de la imagen de puntos filtrada
-    ros::Publisher goal_pub; // Goal pose
+    ros::Publisher goal_pub, gt_pub; // Goal pose
     ros::Publisher searchBB_pub; // Search bounding box
     PointCloud::Ptr pointCloud_msg;
     message_filters::Subscriber<sensor_msgs::Image>range_sub;
@@ -98,10 +105,12 @@ class TrackerFilterAlgNode : public algorithm_base::IriBaseAlgorithm<TrackerFilt
     // CEkfPtr ekf;
 
     //Variables
-    bool flag_rate, flag_tracking, flag_image;
+    bool flag_rate, flag_tracking, flag_image, metrics;
+    std::ofstream metrics_file;
+    std::vector<labelData> ground_truth; u_int ground_truth_id; 
     double last_detection;
-    Eigen::Matrix<double, 2, 1> last_state;
-    CEkfPtr ekf;
+    Eigen::Matrix<double, 2, 1> last_state, last_ground_truth;
+    CEkfPtr ekf, ground_truth_ekf;
     Eigen::MatrixXf data_metrics;
     uint im_rows,im_cols;
 
@@ -131,6 +140,7 @@ class TrackerFilterAlgNode : public algorithm_base::IriBaseAlgorithm<TrackerFilt
 
     void callback(const sensor_msgs::ImageConstPtr& in_image, const detection_msgs::BoundingBoxesConstPtr& yolo,const boost::shared_ptr<const detection_msgs::BoundingBoxes>& dasiam);
     int remap(int x, int limit);
+    float get_iou(detection_msgs::BoundingBox bb1, detection_msgs::BoundingBox bb2);
 
     Eigen::Vector2d boundingBox2point(detection_msgs::BoundingBox& bb, cv::Mat& im_range);
 
