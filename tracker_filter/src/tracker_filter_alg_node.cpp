@@ -107,20 +107,22 @@ void TrackerFilterAlgNode::mainNodeThread(void)
     Eigen::Matrix<double, 2, 1> state; Eigen::Matrix<double, 2, 2> covariance;
     ekf->getStateAndCovariance(state,covariance);
     for (uint iy = 0;iy<im_rows; iy++){
-      for (uint ix = 0;ix<im_cols; ix++){        
+      float ang_h = 22.5 - (45.0/128.0)*iy;
+      ang_h = ang_h*M_PI/180.0;
+      Eigen::VectorXf Z_row = data_metrics.row(iy)*sin(ang_h);
 
-        // recosntruccion de la nube de puntos
+      for (uint ix = 0;ix<im_cols; ix++){        
+        // Point cloud reconstruction
         if (data_metrics(iy,ix)==0)
           continue;
-
-        float ang_h = 22.5 - (45.0/128.0)*iy;
-        ang_h = ang_h*M_PI/180.0;
+        
         float ang_w = 184.0 - (360.0/2048.0)*ix;
         ang_w = ang_w*M_PI/180.0;
         
-        float z = data_metrics(iy,ix) * sin(ang_h);
-        float y = sqrt(pow(data_metrics(iy,ix),2)-pow(z,2))*sin(ang_w);
-        float x = sqrt(pow(data_metrics(iy,ix),2)-pow(z,2))*cos(ang_w);
+        float z = Z_row(ix);
+        float aux = sqrt(pow(data_metrics(iy,ix),2)-pow(z,2));
+        float y = aux*sin(ang_w);
+        float x = aux*cos(ang_w);
 
         pcl::PointXYZ point(x,y,z);
         //Remove points of the target.
@@ -129,7 +131,6 @@ void TrackerFilterAlgNode::mainNodeThread(void)
         }
       }
     }
- 
     pointCloud_msg->points=cloud->points;
     pointCloud_msg->is_dense = true;
     pointCloud_msg->width = (int) pointCloud_msg->points.size();
