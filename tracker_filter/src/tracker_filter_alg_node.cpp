@@ -337,11 +337,11 @@ void TrackerFilterAlgNode::callback(const ImageConstPtr& in_image,const boost::s
     
     search_bbox.ymin=0; search_bbox.ymax=img_range.rows;
     float ang_w=atan2(state(1),state(0));
-    float ang_wmin=atan2(state(1)+(config_.filter_radious+covariance(1,1))*cos(ang_w),state(0)-(config_.filter_radious+covariance(0,0))*sin(ang_w));
+    float ang_wmin=atan2(state(1)+(config_.filter_radious*1.5+covariance(1,1))*cos(ang_w),state(0)-(config_.filter_radious*1.5+covariance(0,0))*sin(ang_w));
     ang_wmin = ang_wmin*180.0/M_PI;
     search_bbox.xmin = int((184 - ang_wmin)*(2048.0/360.0));
 
-    float ang_wmax=atan2(state(1)-(config_.filter_radious+covariance(1,1))*cos(ang_w),state(0)+(config_.filter_radious+covariance(0,0))*sin(ang_w));
+    float ang_wmax=atan2(state(1)-(config_.filter_radious*1.5+covariance(1,1))*cos(ang_w),state(0)+(config_.filter_radious*1.5+covariance(0,0))*sin(ang_w));
     ang_wmax = ang_wmax*180.0/M_PI;
     search_bbox.xmax = int((184 - ang_wmax)*(2048.0/360.0));
     if(search_bbox.xmin>search_bbox.xmax) search_bbox.xmin-=img_range.cols;
@@ -364,6 +364,7 @@ void TrackerFilterAlgNode::callback(const ImageConstPtr& in_image,const boost::s
   geometry_msgs::PoseWithCovarianceStamped goal_msg;
   goal_msg.header.stamp=time_st; goal_msg.header.frame_id= "os_sensor";
   goal_msg.pose.pose.position.x=state(0); goal_msg.pose.pose.position.y=state(1);
+  goal_msg.pose.pose.orientation.w=1.0; 
   goal_msg.pose.covariance[0]=covariance(0,0); goal_msg.pose.covariance[7]=covariance(1,1);
   goal_msg.pose.covariance[14]=1;  
   goal_pub.publish(goal_msg);
