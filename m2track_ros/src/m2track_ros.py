@@ -50,6 +50,7 @@ class pc_tracker_Node:
     #Size of the 3D bounding box.
     self.target=BoundingBox3D()
     self.target.size.z=2.0; self.target.size.x=0.75; self.target.size.y=0.75
+    self.target.center.position.x=0.0; self.target.center.position.y=0.0; self.target.center.position.z=0.0
 
     # Create topic publishers
     self.publisher_tracked = rospy.Publisher("~tracked_object", PoseWithCovarianceStamped, queue_size=1)
@@ -114,8 +115,10 @@ class pc_tracker_Node:
       self.search_area = data.bounding_boxes[0]
 
   def target_callback(self,data):
-    if not self.flag_target and not self.mutex and self.this_frame is not None:
-      print("Target received")
+    dist=np.sqrt((self.target.center.position.x-data.pose.pose.position.x)**2+(self.target.center.position.y-data.pose.pose.position.y)**2 
+                   + (self.target.center.position.z-data.pose.pose.position.z)**2)
+    # Do not update the target if it is close to the actual target in order to obtain a better net return.
+    if (not self.mutex and self.this_frame is not None and dist > 0.25):
       self.flag_pc=False; self.flag_target=True
       # Transform to  a 3D box
       self.target.center=data.pose.pose

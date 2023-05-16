@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <!-- -->
 <launch>
-    <arg name="tracked_object_topic" default="/M2_track"/>
+    <arg name="tracked_object_topic" default="/m2track"/>
     <arg name="depth_topic" default="/ouster/range_image"/>
     <arg name="intensity_topic" default="/ouster/signal_image"/>
     <arg name="target_topic" default="/target"/>

@@ -25,6 +25,7 @@ TrackerFilterAlgNode::TrackerFilterAlgNode(void) :
   
   this->private_node_handle_.getParam("x_model", config_.x_model);
   this->private_node_handle_.getParam("y_model", config_.y_model);
+  this->private_node_handle_.getParam("mute_image_trackers", config_.mute_image_trackers);
   ekf::KalmanConfiguration ekf_config; ekf_config.outlier_mahalanobis_threshold=config_.max_traslation;
   ekf_config.x_model=config_.x_model; ekf_config.y_model=config_.y_model;
 
@@ -50,13 +51,14 @@ TrackerFilterAlgNode::TrackerFilterAlgNode(void) :
 
   this->ekf = new CEkf(ekf_config);
   // this->ekf->setDebug(true);
-  flag_rate=true; flag_tracking=false;
+  flag_rate=false; flag_tracking=false; m2track_obs=false;
   range_sub.subscribe(this->private_node_handle_, "/ouster/range_image",  10);
   yolo_sub.subscribe(this->private_node_handle_, "/tracker/yolo" , 10);
   dasiam_sub.subscribe(this->private_node_handle_, "/tracker/dasiamrpn" , 10);
   typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, detection_msgs::BoundingBoxes, detection_msgs::BoundingBoxes> MySyncPolicy;
   static message_filters::Synchronizer<MySyncPolicy> sync(MySyncPolicy(10), range_sub, yolo_sub, dasiam_sub);
   sync.registerCallback(boost::bind(&TrackerFilterAlgNode::callback,this, _1, _2, _3));
+  m2track_subscriber = this->public_node_handle_.subscribe("/m2track", 1, &TrackerFilterAlgNode::m2track_callback, this);
   
   pc_filtered_pub = this->private_node_handle_.advertise<PointCloud> ("/ouster_filtered", 1);  
   goal_pub = this->private_node_handle_.advertise<geometry_msgs::PoseWithCovarianceStamped>( "/target", 1 );
@@ -216,6 +218,7 @@ void TrackerFilterAlgNode::callback(const ImageConstPtr& in_image,const boost::s
   if(!flag_rate) return;
   auto start=chrono::high_resolution_clock::now();
   flag_rate=false; flag_image=true;
+  geometry_msgs::PoseWithCovarianceStamped m2track_copy=m2track_msg;
   cv_bridge::CvImagePtr cv_range;
       try
       {
@@ -258,7 +261,7 @@ void TrackerFilterAlgNode::callback(const ImageConstPtr& in_image,const boost::s
       metrics_file<<std::fixed<<t<<" ";
     }
   } 
-  if (num_dasiam_detection>0){
+  if (num_dasiam_detection>0 && !(config_.mute_image_trackers && flag_tracking)){
     //If there are 2 boxes, then the target is between the boundaries of the image.
     detection_msgs::BoundingBox bb;
     if (num_dasiam_detection==2){
@@ -292,7 +295,7 @@ void TrackerFilterAlgNode::callback(const ImageConstPtr& in_image,const boost::s
   }
   else if(metrics) metrics_file<<"None None ";
 
-  if (yolo_msg->bounding_boxes.size()>0){
+  if (yolo_msg->bounding_boxes.size()>0 && !(config_.mute_image_trackers && flag_tracking)){
     detection_msgs::BoundingBox bb=yolo_msg->bounding_boxes[0];
     Eigen::Vector2d point=boundingBox2point(bb,img_range);
     ekf::Observation obs; obs.x=point(0); obs.y=point(1);
@@ -311,6 +314,13 @@ void TrackerFilterAlgNode::callback(const ImageConstPtr& in_image,const boost::s
     }
   }
   else if(metrics) metrics_file<<"None None ";
+
+  if(m2track_obs){
+    m2track_obs=false;
+    ekf::Observation obs; obs.x=m2track_copy.pose.pose.position.x; obs.y=m2track_copy.pose.pose.position.y;
+    obs.sigma_x=m2track_copy.pose.covariance[0]; obs.sigma_y=m2track_copy.pose.covariance[7];
+    new_obs = ekf->update(obs) || new_obs;
+  }
 
   Eigen::Matrix<double, 2, 1> state; Eigen::Matrix<double, 2, 2> covariance;
   ekf->getStateAndCovariance(state,covariance);
@@ -349,7 +359,7 @@ void TrackerFilterAlgNode::callback(const ImageConstPtr& in_image,const boost::s
     search_bbox.probability=(covariance(0,0)+covariance(1,1))/2;
   }
 
-   if(new_obs){
+  if(new_obs){
     last_detection=ros::Time::now().toSec(); flag_tracking=true;
     last_state=state;
   }
@@ -377,6 +387,11 @@ void TrackerFilterAlgNode::callback(const ImageConstPtr& in_image,const boost::s
   }
   double diff = chrono::duration_cast<std::chrono::nanoseconds>(chrono::high_resolution_clock::now()-start).count();
   time_update=(time_update+diff)/2.0;
+}
+
+void TrackerFilterAlgNode::m2track_callback(const geometry_msgs::PoseWithCovarianceStampedConstPtr& data){
+  m2track_msg=*data;
+  m2track_obs=true;
 }
 
 int TrackerFilterAlgNode::remap(int x, int limit){
