@@ -6,4 +6,3 @@ filter_radious: 0.8
 search_time: 5.0
 x_model: 1.0
 y_model: 1.0
-mute_image_trackers: false

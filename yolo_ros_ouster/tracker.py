@@ -272,7 +272,7 @@ class FusionTracker:
                             match=True
                             if now-self.saved_selection[i]["time"]>self.saved_selection[i]["count"]+1:
                                 self.saved_selection[i]["count"]+=1
-                                if self.saved_selection[i]["count"]==1:   
+                                if self.saved_selection[i]["count"]==3:   
                                     self.yolo_tracker.bbox=bbox; self.target_descriptor=descriptor 
                                     self.dasiam_tracker.bbox=bbox        
                                     self.operation_mode=self.TRACK_MODE; self.tracker_mode=self.TRACKER_NORMAL
@@ -350,7 +350,7 @@ class FusionTracker:
                 #Use the intersection with the previous bounding box to calculate the covariance.
                 #We use the actuar target covariance because a higher covariance in the target will 
                 #produce a higher search are and therefore more desviation.
-                self.yolo_tracker.covariance=self.target_covariance*(1.0-self.get_iou(best_bbox,self.yolo_tracker.bbox))+0.1
+                self.yolo_tracker.covariance=self.target_covariance*(1.0-self.get_iou(best_bbox,self.yolo_tracker.bbox))+0.3
                 self.yolo_tracker.bbox=best_bbox
                 self.yolo_tracker.draw_rectangles(self.im_output,(0,0,255))
                 # Update descriptor
@@ -441,7 +441,7 @@ class FusionTracker:
         # Draw bounding box
         self.prev_frame=frame
         self.dasiam_tracker.draw_rectangles(self.im_output)
-        self.dasiam_tracker.covariance=self.target_covariance*(1.0-self.get_iou(prev_bbox,self.dasiam_tracker.bbox))+0.1
+        self.dasiam_tracker.covariance=self.target_covariance*(1.0-self.get_iou(prev_bbox,self.dasiam_tracker.bbox))+0.3
         
         end=time.clock_gettime_ns(time.CLOCK_THREAD_CPUTIME_ID)
         self.track_t=end-start if self.track_t==0 else (self.track_t+end-start)/2

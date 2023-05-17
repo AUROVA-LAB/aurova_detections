@@ -261,6 +261,38 @@ void TrackerFilterAlgNode::callback(const ImageConstPtr& in_image,const boost::s
       metrics_file<<std::fixed<<t<<" ";
     }
   } 
+
+  if(m2track_obs){
+    m2track_obs=false;
+    ekf::Observation obs; obs.x=m2track_copy.pose.pose.position.x; obs.y=m2track_copy.pose.pose.position.y;
+    obs.sigma=Eigen::Matrix2d::Zero();
+    obs.sigma(0,0)=m2track_copy.pose.covariance[0]; obs.sigma(1,1)=m2track_copy.pose.covariance[7];
+    new_obs = ekf->update(obs);
+  }
+
+  float dist_yolo=-1, iou_yolo=-1; //In previous version, dasiam metrics were written before.
+  if (yolo_msg->bounding_boxes.size()>0 && !(config_.mute_image_trackers && flag_tracking)){
+    detection_msgs::BoundingBox bb=yolo_msg->bounding_boxes[0];
+    Eigen::Vector2d point=boundingBox2point(bb,img_range);
+    ekf::Observation obs; obs.x=point(0); obs.y=point(1);
+    //Covariance is greater in the angle of detection, because the depth estimation may have errors.
+    Eigen::Matrix2d cov=Eigen::Matrix2d::Zero(), rot=Eigen::Matrix2d::Zero();
+    rot=Eigen::Rotation2Dd(atan2(obs.y,obs.x));
+    cov(0,0)=yolo_msg->bounding_boxes[0].probability*2; cov(1,1)=yolo_msg->bounding_boxes[0].probability;
+    obs.sigma=rot*cov*rot.transpose();
+    bool ok = ekf->update(obs);
+    new_obs = new_obs || ok;
+    if(metrics){
+      //Distance between the center of the bounding boxes.
+      float cx1=ground_truth_bb.xmin+(ground_truth_bb.xmax-ground_truth_bb.xmin)/2.0;
+      float cy1=ground_truth_bb.ymin+(ground_truth_bb.ymax-ground_truth_bb.ymin)/2.0;
+      float cx2=bb.xmin+(bb.xmax-bb.xmin)/2.0;
+      float cy2=bb.ymin+(bb.ymax-bb.ymin)/2.0;
+      dist_yolo=float(sqrt(pow(cx1-cx2,2)+pow(cy1-cy2,2)));
+      iou_yolo=get_iou(ground_truth_bb,bb);
+    }
+  }
+
   if (num_dasiam_detection>0 && !(config_.mute_image_trackers && flag_tracking)){
     //If there are 2 boxes, then the target is between the boundaries of the image.
     detection_msgs::BoundingBox bb;
@@ -280,28 +312,12 @@ void TrackerFilterAlgNode::callback(const ImageConstPtr& in_image,const boost::s
     }
     Eigen::Vector2d point=boundingBox2point(bb,img_range);
     ekf::Observation obs; obs.x=point(0); obs.y=point(1);
-    obs.sigma_x=dasiam_msg->bounding_boxes[0].probability; obs.sigma_y=obs.sigma_x;
-    new_obs = ekf->update(obs);
-    if(metrics){
-      //Distance between the center of the bounding boxes.
-      float cx1=ground_truth_bb.xmin+(ground_truth_bb.xmax-ground_truth_bb.xmin)/2.0;
-      float cy1=ground_truth_bb.ymin+(ground_truth_bb.ymax-ground_truth_bb.ymin)/2.0;
-      float cx2=bb.xmin+(bb.xmax-bb.xmin)/2.0;
-      float cy2=bb.ymin+(bb.ymax-bb.ymin)/2.0;
-      metrics_file<<float(sqrt(pow(cx1-cx2,2)+pow(cy1-cy2,2)))<<" ";
-      //Intersection over Union
-      metrics_file<<get_iou(ground_truth_bb,bb)<<" ";
-    }
-  }
-  else if(metrics) metrics_file<<"None None ";
-
-  if (yolo_msg->bounding_boxes.size()>0 && !(config_.mute_image_trackers && flag_tracking)){
-    detection_msgs::BoundingBox bb=yolo_msg->bounding_boxes[0];
-    Eigen::Vector2d point=boundingBox2point(bb,img_range);
-    ekf::Observation obs; obs.x=point(0); obs.y=point(1);
-    obs.sigma_x=yolo_msg->bounding_boxes[0].probability; obs.sigma_y=obs.sigma_x;
+    Eigen::Matrix2d cov=Eigen::Matrix2d::Zero(), rot=Eigen::Matrix2d::Zero();
+    rot=Eigen::Rotation2Dd(atan2(obs.y,obs.x));
+    cov(0,0)=dasiam_msg->bounding_boxes[0].probability*2; cov(1,1)=dasiam_msg->bounding_boxes[0].probability;
+    obs.sigma=rot*cov*rot.transpose();
     bool ok = ekf->update(obs);
-    new_obs = new_obs || ok;
+    new_obs = ok || new_obs;
     if(metrics){
       //Distance between the center of the bounding boxes.
       float cx1=ground_truth_bb.xmin+(ground_truth_bb.xmax-ground_truth_bb.xmin)/2.0;
@@ -315,11 +331,9 @@ void TrackerFilterAlgNode::callback(const ImageConstPtr& in_image,const boost::s
   }
   else if(metrics) metrics_file<<"None None ";
 
-  if(m2track_obs){
-    m2track_obs=false;
-    ekf::Observation obs; obs.x=m2track_copy.pose.pose.position.x; obs.y=m2track_copy.pose.pose.position.y;
-    obs.sigma_x=m2track_copy.pose.covariance[0]; obs.sigma_y=m2track_copy.pose.covariance[7];
-    new_obs = ekf->update(obs) || new_obs;
+  if(metrics){
+    if(dist_yolo<0) metrics_file<<"None None ";
+    else metrics_file<<dist_yolo<<" "<<iou_yolo<<" ";
   }
 
   Eigen::Matrix<double, 2, 1> state; Eigen::Matrix<double, 2, 2> covariance;
@@ -329,7 +343,8 @@ void TrackerFilterAlgNode::callback(const ImageConstPtr& in_image,const boost::s
     Eigen::Vector2d ground_truth_pose=boundingBox2point(ground_truth_bb,img_range);
     //Check if the position have sense respect the previous position, that  is the target depth is OK.
     ekf::Observation obs; obs.x=ground_truth_pose(0); obs.y=ground_truth_pose(1);
-    obs.sigma_x=0.1; obs.sigma_y=0.1;
+    obs.sigma=Eigen::Matrix2d::Zero();
+    obs.sigma(0,0)=0.1; obs.sigma(1,1)=0.1;
     ground_truth_ekf->update(obs);
     Eigen::Matrix<double, 2, 2> aux;
     ground_truth_ekf->getStateAndCovariance(ground_truth_pose,aux);
@@ -376,6 +391,7 @@ void TrackerFilterAlgNode::callback(const ImageConstPtr& in_image,const boost::s
   goal_msg.pose.pose.position.x=state(0); goal_msg.pose.pose.position.y=state(1);
   goal_msg.pose.pose.orientation.w=1.0; 
   goal_msg.pose.covariance[0]=covariance(0,0); goal_msg.pose.covariance[7]=covariance(1,1);
+  goal_msg.pose.covariance[1]=covariance(0,1); goal_msg.pose.covariance[6]=covariance(1,0);
   goal_msg.pose.covariance[14]=1;  
   goal_pub.publish(goal_msg);
 

@@ -14,7 +14,7 @@ namespace ekf
 struct Observation
 {
   double x, y;
-  double sigma_x, sigma_y;
+  Eigen::Matrix<double, 2, 2> sigma;
 };
 
 struct KalmanConfiguration

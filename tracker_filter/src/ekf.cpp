@@ -57,8 +57,7 @@ bool CEkf::update(ekf::Observation obs)
   {
     X_(0) = obs.x;
     X_(1) = obs.y;
-    P_(0, 0) = obs.sigma_x; // initial value for x variance;
-    P_(1, 1) = obs.sigma_y; // initial value for y variance
+    P_ = obs.sigma; // initial value for covariance;
     flag_ekf_initialised_=true;
     return true;
   }
@@ -80,8 +79,7 @@ bool CEkf::update(ekf::Observation obs)
     // Innovation covariance
     Eigen::Matrix<double, 2, 2> R = Eigen::Matrix<double, 2, 2>::Zero();
 
-    R(0, 0) = obs.sigma_x;
-    R(1, 1) = obs.sigma_y;
+    R = obs.sigma;
 
     Eigen::Matrix<double, 2, 2> Z = Eigen::Matrix<double, 2, 2>::Zero();
 

@@ -176,7 +176,7 @@ def main_thread(node: pc_tracker_Node):
       #Calculate covariance
       dist=np.sqrt((node.target.center.position.x-predicted_box.center.position.x)**2+(node.target.center.position.y-predicted_box.center.position.y)**2 
                    + (node.target.center.position.z-predicted_box.center.position.z)**2)
-      covariance=0.1+dist 
+      covariance=0.3+dist 
       #Update target
       node.target=predicted_box
       node.prev_frame=node.this_frame
