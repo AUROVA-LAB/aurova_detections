@@ -349,7 +349,7 @@ class FusionTracker:
                 self.search_start=rospy.get_time(); self.tracker_start=rospy.get_time()
                 #Use the intersection with the previous bounding box to calculate the covariance.
                 #We use the actuar target covariance because a higher covariance in the target will 
-                #produce a higher search are and therefore more desviation.
+                #produce a higher search area and therefore more desviation.
                 self.yolo_tracker.covariance=self.target_covariance*(1.0-self.get_iou(best_bbox,self.yolo_tracker.bbox))+0.3
                 self.yolo_tracker.bbox=best_bbox
                 self.yolo_tracker.draw_rectangles(self.im_output,(0,0,255))

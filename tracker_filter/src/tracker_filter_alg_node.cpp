@@ -21,7 +21,7 @@ TrackerFilterAlgNode::TrackerFilterAlgNode(void) :
   this->private_node_handle_.getParam("max_traslation_distance", config_.max_traslation);
   this->private_node_handle_.getParam("filter_radious", config_.filter_radious);
   this->private_node_handle_.getParam("search_time", config_.search_time);
-  this->private_node_handle_.getParam("metrics", metrics);
+  this->private_node_handle_.param("metrics", metrics,false);
   
   this->private_node_handle_.getParam("x_model", config_.x_model);
   this->private_node_handle_.getParam("y_model", config_.y_model);
