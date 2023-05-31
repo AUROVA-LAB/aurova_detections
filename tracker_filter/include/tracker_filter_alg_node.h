@@ -73,6 +73,7 @@
 #include <opencv2/imgproc/imgproc.hpp>
 #include <limits>
 #include <chrono> 
+#include <termios.h>
 
 // [publisher subscriber headers]
 
@@ -144,6 +145,7 @@ class TrackerFilterAlgNode : public algorithm_base::IriBaseAlgorithm<TrackerFilt
     void m2track_callback(const geometry_msgs::PoseWithCovarianceStampedConstPtr& data);
     int remap(int x, int limit);
     float get_iou(detection_msgs::BoundingBox bb1, detection_msgs::BoundingBox bb2);
+    char getch();
 
     Eigen::Vector2d boundingBox2point(detection_msgs::BoundingBox& bb, cv::Mat& im_range);
 

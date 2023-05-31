@@ -11,11 +11,10 @@
     <arg name="half"                  default="false"/>
 
     <!-- Tracker configuration -->
-    <arg name="detect_frequency"      default="5"/>
     <arg name="search_time"           default="7"/>
     <arg name="threshold_tracker"     default="0.65"/>
-    <arg name="threshold_search"      default="0.6"/>
     <arg name="limit_covariance"      default="5.0"/>
+    <arg name="select_time"           default="1"/>
     
     <!-- replace imgsz -->
     <arg name="inference_size_h"      default="128"/>
@@ -29,7 +28,6 @@
 
     <!-- Topic annotated image -->
     <arg name="output_image_topic"      default="/yolov5/image_out"/>
-    <arg name="output_video_dir"        default="/home/alolivas/aurova-lab/labrobotica/dataset/tracker_output/"/>
 
     <node pkg="yolov5_ros" name="merge_channels" type="merge_channels_ouster.py" output="screen"></node>
 
@@ -53,15 +51,12 @@
         <param name="search_topic"              value="$(arg search_topic)"/>
 
         <param name="output_image_topic"    value="$(arg output_image_topic)"/>
-        <param name="output_video_dir"      value="$(arg output_video_dir)"/>
 
-        <param name="detect_frequency"      value="$(arg detect_frequency)"/>
         <param name="search_time"           value="$(arg search_time)"/>
         <param name="threshold_tracker"     value="$(arg threshold_tracker)"/>
-        <param name="threshold_search"      value="$(arg threshold_search)"/>
         <param name="limit_covariance"      value="$(arg limit_covariance)"/>
+        <param name="select_time"           value="$(arg select_time)"/>
     </node>
-    <!-- <include file="$(find camera_launch)/launch/d435.launch"/> -->
 
 
 

@@ -23,16 +23,14 @@ This package uses the Deep Neural Network YOLOv5 to detect persons with the imag
 	- weights
 	- data
 	- confidence_threshold
-	- iou_threshold
-	- inference_size_h
-	- inference_size_w
 	- input_image_topic
-	- output_topic
-	- publish_image
+	- output_topic_(yolo,dasiamrpn)
 	- output_image_topic
+	- threshold_tracker
+	- select_time
 
 - The 4 channels are merged and publish in `/ouster_merged` topic.
 
 - The detector (yolov5.launch) publish an image with the bounding boxes of the detected persons in the output_image_topic, by default `/yolov5/image_out`. The bounding boxes are also published in the output_topic, by default `/yolov5/detections`. This type of messages are defined in the package[detection_msgs](https://github.com/EPVelasco/detection_msgs), for using them outside the docker install the package.
 
-- In the same way, the tracker (tracker.launch) publish the result image and the bounding box of the targe (it will be 2 if the target is on the limits of the image, as it is a 360 degrees image). The policy to select the target is that the person have to be in front of the robot for more than 5 seconds. The result image will show two lines delimiting the seach area when it is selecting a target otherwise the boundig box of the target. The blue box is the one obtained by DaSiamRPN, the red one is that YOLO detect the target and it have and intersection with the previous DaSiamRPN box and when it loses the targe and find it again the box is green.
+- In the same way, the tracker (tracker.launch) publish the result image and the bounding box of the target (it will be 2 if the target is on the limits of the image, as it is a 360 degrees image). The policy to select the target is that the person have to be in front of the robot for more than `select_time` seconds. The result image will show two lines delimiting the seach area when it is selecting a target otherwise the boundig box of the target. The blue box is the one obtained by DaSiamRPN and the red one is that YOLO detect the target. Pressing the key **s**, the tracker is reset for selecting a new target. Pressing the key **t**, it prints the average computational time of YOLO tracker and the DaSiamRPN tracker.

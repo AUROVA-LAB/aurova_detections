@@ -138,11 +138,9 @@ class FusionTracker:
         params.model="/home/ros_ws/src/yolov5_ros/models/dasiamrpn_model.onnx"
         self.dasiam_tracker.net=cv2.TrackerDaSiamRPN_create(params)
         self.augment=100
-        detect_frequency=rospy.get_param("~detect_frequency", 2.0) #Frequency to use Yolo to detect the target and compare with tracker.
-        self.detect_period=1.0/detect_frequency
         self.search_time=rospy.get_param("~search_time", 2.0) #Search during 2 seconds before changing mode
         self.threshold_tracker=rospy.get_param("~threshold_tracker", 0.4) #Minimum correlation to consider a detected target as a possible target.
-        # self.threshold_search=rospy.get_param("~threshold_search", 0.6) #More restrictive to re-identify the target during search mode
+        self.detect_time=rospy.get_param("~detect_time", 3)
         self.aug_per=rospy.get_param("~search_augmentation_percentage", 0.1) #More restrictive to re-identify the target during search mode
         #If the target is lost by YOLO and the covariance of the ekf filter is greater than this value, chanbe to select mode.
         self.limit_covariance=rospy.get_param("~limit_covariance", 5.0) 
@@ -272,7 +270,7 @@ class FusionTracker:
                             match=True
                             if now-self.saved_selection[i]["time"]>self.saved_selection[i]["count"]+1:
                                 self.saved_selection[i]["count"]+=1
-                                if self.saved_selection[i]["count"]==3:   
+                                if self.saved_selection[i]["count"]==self.detect_time:   
                                     self.yolo_tracker.bbox=bbox; self.target_descriptor=descriptor 
                                     self.dasiam_tracker.bbox=bbox        
                                     self.operation_mode=self.TRACK_MODE; self.tracker_mode=self.TRACKER_NORMAL
@@ -293,51 +291,17 @@ class FusionTracker:
                     thisdict = {"bbox":bbox, "descriptor":descriptor, "time":now, "count":0}
                     self.saved_selection.append(thisdict)
 
-    # def search_mode(self, im):
-    #     start=rospy.get_time()
-    #     best_corr=0
-    #     bounding_boxes = self.detectYolo5v(im.copy())
-    #     for bbox in bounding_boxes:
-    #         if self.get_iou(bbox,self.search_area)>0:
-    #             segment_frame, mask=self.segment_person(im,bbox)
-    #             descriptor=self.histogramPartsBody(segment_frame, mask)
-    #             corr=cv2.compareHist(self.target_descriptor,descriptor,cv2.HISTCMP_CORREL)
-    #             # cv2.rectangle(self.im_output, (bbox.xmin, bbox.ymin), (bbox.xmax, bbox.ymax), (0,0,0), 2, 1)
-    #             # cv2.putText(self.im_output, f'{corr:.2f}',(bbox.xmin, bbox.ymin+10),cv2.FONT_HERSHEY_SIMPLEX,0.7,(0,0,255))
-    #             if corr>self.threshold_search and corr>best_corr:
-    #                 best_corr=corr; best_bbox=bbox; best_descriptor=descriptor
-    #     end=rospy.get_time()
-    #     if best_corr>0:
-    #         self.bbox=best_bbox
-    #         s,n,r,depth=cv2.split(im)
-    #         frame=cv2.merge([s,n,r])
-    #         #Change to x,y,(top point)w,h(width,heigth) format for opencv
-    #         self.bbox_tracker=[self.bbox.xmin, self.bbox.ymin, self.bbox.xmax-self.bbox.xmin, self.bbox.ymax-self.bbox.ymin]
-    #         self.dasiam_tracker.net.init(frame, self.bbox_tracker); self.prev_frame=frame
-    #         self.tracker_mode=self.TRACKER_NORMAL; self.operation_mode=self.TRACK_MODE
-    #         self.tracker_start=rospy.get_time()
-    #         self.draw_rectangles(best_bbox,self.bounding_boxes_yolo,(0,255,0))
-    #         # Update descriptor
-    #         self.target_descriptor=self.target_descriptor*0.5+best_descriptor*0.5
-    #     elif rospy.get_time()-self.tracker_start<self.detect_period: self.track_target(im); self.increase_search()
-    #     elif rospy.get_time()-self.search_start>self.search_time: self.operation_mode=self.SELECT_TARGET_MODE
-    #     self.search_t=end-start if self.search_t==0 else (self.search_t+end-start)/2
-
     def track_yolo(self, im):
-        # if rospy.get_time()-self.tracker_start>self.detect_period:
             start=time.clock_gettime_ns(time.CLOCK_THREAD_CPUTIME_ID)
             best_corr=0
             bounding_boxes = self.detectYolo5v(im.copy())
             candidate=None; best_corr2=0
             for bbox in bounding_boxes:
                 iou=self.get_iou(bbox,self.search_area)
-                # cv2.rectangle(self.im_output, (bbox.xmin, bbox.ymin), (bbox.xmax, bbox.ymax), (0,0,0), 2, 1)
                 if iou>0:
                     segment_frame, mask=self.segment_person(im,bbox)
                     descriptor=self.histogramPartsBody(segment_frame, mask)
                     corr=cv2.compareHist(self.target_descriptor,descriptor,cv2.HISTCMP_CORREL)
-                    # cv2.rectangle(self.im_output, (bbox.xmin, bbox.ymin), (bbox.xmax, bbox.ymax), (0,0,0), 2, 1)
-                    # cv2.putText(self.im_output, f'{corr:.2f}',(bbox.xmin, bbox.ymin+10),cv2.FONT_HERSHEY_SIMPLEX,0.7,(0,0,255))
                     if corr>self.threshold_tracker:
                         #Use the percentage of are in the intersection of the bounding boxes.
                         corr+=iou/2
@@ -355,7 +319,8 @@ class FusionTracker:
                 self.yolo_tracker.draw_rectangles(self.im_output,(0,0,255))
                 # Update descriptor
                 self.target_descriptor=self.target_descriptor*0.5+best_descriptor*0.5
-                if self.reset_dasiam or self.get_iou(self.yolo_tracker.bbox,self.dasiam_tracker.bbox)<0.25:
+                if self.reset_dasiam or (self.distance_center(self.yolo_tracker.bbox,self.search_area)< self.distance_center(self.dasiam_tracker.bbox,self.search_area)
+                                          and self.get_iou(self.yolo_tracker.bbox,self.dasiam_tracker.bbox)<0.25):
                     self.dasiam_tracker.bbox=best_bbox
                     s,n,r,depth=cv2.split(im)
                     frame=cv2.merge([s,n,r])
@@ -363,7 +328,11 @@ class FusionTracker:
                     self.dasiam_tracker.bbxywh=[best_bbox.xmin, best_bbox.ymin, best_bbox.xmax-best_bbox.xmin, best_bbox.ymax-best_bbox.ymin]
                     self.dasiam_tracker.net.init(frame, self.dasiam_tracker.bbxywh); self.prev_frame=frame
                     self.tracker_mode=self.TRACKER_NORMAL; self.reset_dasiam=False
-                    
+                elif self.dasiam_tracker.covariance is not None:
+                    iou_trackers=self.get_iou(self.yolo_tracker.bbox,self.dasiam_tracker.bbox)
+                    #Increase the covariance proportionally to the difference between the two trackers.
+                    self.yolo_tracker.covariance*=2-iou_trackers
+                    self.dasiam_tracker.covariance*=2-iou_trackers     
 
             elif rospy.get_time()-self.search_start>self.search_time and candidate is not None:
                 if self.target_covariance<self.limit_covariance:
@@ -379,7 +348,6 @@ class FusionTracker:
                     self.operation_mode=self.SELECT_TARGET_MODE
             end=time.clock_gettime_ns(time.CLOCK_THREAD_CPUTIME_ID)  
             self.detect_t=end-start if self.detect_t==0 else (self.detect_t+end-start)/2
-
 
 
     def track_dasiam(self, im,):
@@ -460,8 +428,6 @@ class FusionTracker:
         self.search_area = data.bounding_boxes[0]
         #We use the 'probability' field to pass the covariance.
         self.target_covariance=data.bounding_boxes[0].probability
-        # self.operation_mode=self.SEARCH_MODE
-        # self.search_start=rospy.get_time()
         
 
     def preprocess(self, img):
@@ -499,7 +465,6 @@ class FusionTracker:
             for j in range(shape[1]):
                 if segment_frame[i,j,3]==median: 
                     mask[i,j]=255
-                    # self.im_output[bbox.ymin+i,bbox.xmin+j]=(255,255,255,255)
 
         return segment_frame, mask
     
@@ -587,6 +552,9 @@ class FusionTracker:
             assert iou >= 0.0
             assert iou <= 1.0
             return iou
+    
+    def distance_center(self, bbox1, bbox2):
+        return np.sqrt(((bbox1.xmax-bbox1.xmin)/2-(bbox2.xmax-bbox2.xmin)/2)**2+((bbox1.ymax-bbox1.ymin)/2-(bbox2.ymax-bbox2.ymin)/2)**2)
 
     def keyboard_callback(self, input):
         # print("Input: ", input)
@@ -595,7 +563,6 @@ class FusionTracker:
         elif input=='t':
             print("DaSiamRPN mean time: ", self.track_t*(10**-9))
             print("YOLO mean time: ", self.detect_t*(10**-9))
-            # print("Search mean time: ", self.search_t)
 
 # Class for reading keyboard input
 class KeyboardThread(Thread):
@@ -627,7 +594,6 @@ def main_thread(node: FusionTracker):
         node.flag_image=False
         node.im_output=node.im.copy()
         if node.operation_mode==node.SELECT_TARGET_MODE: node.select_mode(node.im.copy())
-        # elif node.operation_mode==node.SEARCH_MODE: node.search_mode(node.im.copy())
         elif node.operation_mode==node.TRACK_MODE: 
             node.track_dasiam(node.im.copy())
             node.track_yolo(node.im.copy())
@@ -650,7 +616,6 @@ def main_thread(node: FusionTracker):
             bbox.probability=node.yolo_tracker.covariance
             bounding_boxes_yolo.bounding_boxes.append(bbox) #Append the bounding boxes which are between the limits of the image.
         node.yolo_pub.publish(bounding_boxes_yolo)
-        # cv2.rectangle(node.im_output,(node.search_area.xmin,node.search_area.ymin),(node.search_area.xmax,node.search_area.ymax), (255,255,0))
         node.image_pub.publish(node.bridge.cv2_to_imgmsg(node.im_output, "bgra8")) 
       
     node.rate.sleep()

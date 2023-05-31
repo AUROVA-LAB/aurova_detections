@@ -51,7 +51,7 @@ TrackerFilterAlgNode::TrackerFilterAlgNode(void) :
 
   this->ekf = new CEkf(ekf_config);
   // this->ekf->setDebug(true);
-  flag_rate=false; flag_tracking=false; m2track_obs=false;
+  flag_rate=false; flag_tracking=false; m2track_obs=false; flag_image=false;
   range_sub.subscribe(this->private_node_handle_, "/ouster/range_image",  10);
   yolo_sub.subscribe(this->private_node_handle_, "/tracker/yolo" , 10);
   dasiam_sub.subscribe(this->private_node_handle_, "/tracker/dasiamrpn" , 10);
@@ -67,6 +67,17 @@ TrackerFilterAlgNode::TrackerFilterAlgNode(void) :
 
   pointCloud_msg = PointCloud::Ptr (new PointCloud);
   time_pointcloud=0; time_update=0;
+
+  //Terminla configuration
+  struct termios term;
+  tcgetattr(fileno(stdin), &term);
+
+  term.c_lflag &= ~ECHO;
+  term.c_lflag &= ~ICANON;
+  term.c_cc[VMIN] = 1;
+  term.c_cc[VTIME] = 0;
+  tcsetattr(fileno(stdin), 0, &term);
+
 }
 
 TrackerFilterAlgNode::~TrackerFilterAlgNode(void)
@@ -75,6 +86,14 @@ TrackerFilterAlgNode::~TrackerFilterAlgNode(void)
   if(metrics_file.is_open()) metrics_file.close();
   cout<<"Pointcloud reconstruction mean time "<<time_pointcloud*pow(10,-9)<<endl;
   cout<<"Update mean time "<<time_update*pow(10,-9)<<endl;
+
+  //Restore terminal configuration
+  struct termios term;
+  tcgetattr(fileno(stdin), &term);
+
+  term.c_lflag |= ICANON;
+  term.c_lflag |= ECHO;
+  tcsetattr(fileno(stdin), 0, &term);
 }
 
 void TrackerFilterAlgNode::mainNodeThread(void)
@@ -87,6 +106,15 @@ void TrackerFilterAlgNode::mainNodeThread(void)
   
   // [fill action structure and make request to the action server]
   flag_rate=true;
+
+  //Check if manual reset
+  if(this->getch()=='s'){
+    ROS_INFO("Reset EKF");
+    this->flag_tracking=false;
+    ekf->flag_ekf_initialised_=false;
+    this->ekf->setStateAndCovariance(Eigen::Vector2d::Zero(), Eigen::Matrix2d::Zero());
+  }
+
   //Predict covariance
   if(ekf->flag_ekf_initialised_){
     double t=ros::Time::now().toSec()-last_detection;
@@ -217,7 +245,7 @@ void TrackerFilterAlgNode::callback(const ImageConstPtr& in_image,const boost::s
 {
   if(!flag_rate) return;
   auto start=chrono::high_resolution_clock::now();
-  flag_rate=false; flag_image=true;
+  flag_rate=false; 
   geometry_msgs::PoseWithCovarianceStamped m2track_copy=m2track_msg;
   cv_bridge::CvImagePtr cv_range;
       try
@@ -235,7 +263,7 @@ void TrackerFilterAlgNode::callback(const ImageConstPtr& in_image,const boost::s
   Eigen::Matrix<float,Dynamic,Dynamic> depth_data;// matrix with image values and matrix qith image values into real range data
   cv2eigen(img_range,depth_data);       // convert img_range into eigen matrix
   data_metrics = depth_data*(261/pow(2,16)); // resolution 16 bits -> 4mm. 
-  bool target_detected=false;
+  bool target_detected=false; flag_image=true;
   
 
   bool new_obs=false;
@@ -413,6 +441,28 @@ void TrackerFilterAlgNode::m2track_callback(const geometry_msgs::PoseWithCovaria
 int TrackerFilterAlgNode::remap(int x, int limit){
   if(x<0) return limit+x;
   return x;
+}
+
+char TrackerFilterAlgNode::getch()
+{
+    fd_set set;
+    struct timeval timeout;
+    int rv;
+    char buff = 0;
+    int len = 1;
+    int filedesc = 0;
+    FD_ZERO(&set);
+    FD_SET(filedesc, &set);
+
+    timeout.tv_sec = 0;
+    timeout.tv_usec = 1000;
+
+    rv = select(filedesc + 1, &set, NULL, NULL, &timeout);
+
+    if(rv>0)
+        read(filedesc, &buff, len );
+
+    return (buff);
 }
 
 /*  [service callbacks] */
