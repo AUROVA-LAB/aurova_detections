@@ -140,7 +140,7 @@ class FusionTracker:
         self.augment=100
         self.search_time=rospy.get_param("~search_time", 2.0) #Search during 2 seconds before changing mode
         self.threshold_tracker=rospy.get_param("~threshold_tracker", 0.4) #Minimum correlation to consider a detected target as a possible target.
-        self.detect_time=rospy.get_param("~detect_time", 3)
+        self.select_time=rospy.get_param("~select_time", 3)
         self.aug_per=rospy.get_param("~search_augmentation_percentage", 0.1) #More restrictive to re-identify the target during search mode
         #If the target is lost by YOLO and the covariance of the ekf filter is greater than this value, chanbe to select mode.
         self.limit_covariance=rospy.get_param("~limit_covariance", 5.0) 
@@ -270,7 +270,7 @@ class FusionTracker:
                             match=True
                             if now-self.saved_selection[i]["time"]>self.saved_selection[i]["count"]+1:
                                 self.saved_selection[i]["count"]+=1
-                                if self.saved_selection[i]["count"]==self.detect_time:   
+                                if self.saved_selection[i]["count"]==self.select_time:   
                                     self.yolo_tracker.bbox=bbox; self.target_descriptor=descriptor 
                                     self.dasiam_tracker.bbox=bbox        
                                     self.operation_mode=self.TRACK_MODE; self.tracker_mode=self.TRACKER_NORMAL
@@ -299,6 +299,7 @@ class FusionTracker:
             for bbox in bounding_boxes:
                 iou=self.get_iou(bbox,self.search_area)
                 if iou>0:
+                    cv2.rectangle(self.im_output,(bbox.xmin, bbox.ymin),(bbox.xmax, bbox.ymax),(0,255,0),2)
                     segment_frame, mask=self.segment_person(im,bbox)
                     descriptor=self.histogramPartsBody(segment_frame, mask)
                     corr=cv2.compareHist(self.target_descriptor,descriptor,cv2.HISTCMP_CORREL)
@@ -403,7 +404,7 @@ class FusionTracker:
         self.dasiam_tracker.bbox.ymax=self.dasiam_tracker.bbxywh[1]+self.dasiam_tracker.bbxywh[3]
 
         #Possible lost the target, update with Yolo if possible
-        if self.get_iou(self.dasiam_tracker.bbox,self.search_area)==0: self.reset_dasiam=True
+        if self.get_iou(self.dasiam_tracker.bbox,search_area)==0: self.reset_dasiam=True
 
 
         # Draw bounding box
@@ -491,6 +492,7 @@ class FusionTracker:
         The second bbox can be outside the limits, considering the 360 degrees.
         """
         outside_limits=False
+        bb2=copy(bb2)
         if(bb2.xmax>self.img_size[0] and bb2.xmin<0):
             return (bb1.xmax - bb1.xmin) * (bb1.ymax - bb1.ymin) / (self.img_size[0]*self.img_size[1])
         elif(bb2.xmax>self.img_size[0]):
@@ -557,7 +559,6 @@ class FusionTracker:
         return np.sqrt(((bbox1.xmax-bbox1.xmin)/2-(bbox2.xmax-bbox2.xmin)/2)**2+((bbox1.ymax-bbox1.ymin)/2-(bbox2.ymax-bbox2.ymin)/2)**2)
 
     def keyboard_callback(self, input):
-        # print("Input: ", input)
         if input=='s':
             self.flag_select=True
         elif input=='t':
@@ -616,6 +617,7 @@ def main_thread(node: FusionTracker):
             bbox.probability=node.yolo_tracker.covariance
             bounding_boxes_yolo.bounding_boxes.append(bbox) #Append the bounding boxes which are between the limits of the image.
         node.yolo_pub.publish(bounding_boxes_yolo)
+        cv2.rectangle(node.im_output,(node.search_area.xmin, node.search_area.ymin),(node.search_area.xmax, node.search_area.ymax),(255,255,255),2)
         node.image_pub.publish(node.bridge.cv2_to_imgmsg(node.im_output, "bgra8")) 
       
     node.rate.sleep()
