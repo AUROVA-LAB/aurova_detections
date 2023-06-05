@@ -299,7 +299,6 @@ class FusionTracker:
             for bbox in bounding_boxes:
                 iou=self.get_iou(bbox,self.search_area)
                 if iou>0:
-                    cv2.rectangle(self.im_output,(bbox.xmin, bbox.ymin),(bbox.xmax, bbox.ymax),(0,255,0),2)
                     segment_frame, mask=self.segment_person(im,bbox)
                     descriptor=self.histogramPartsBody(segment_frame, mask)
                     corr=cv2.compareHist(self.target_descriptor,descriptor,cv2.HISTCMP_CORREL)
@@ -617,7 +616,6 @@ def main_thread(node: FusionTracker):
             bbox.probability=node.yolo_tracker.covariance
             bounding_boxes_yolo.bounding_boxes.append(bbox) #Append the bounding boxes which are between the limits of the image.
         node.yolo_pub.publish(bounding_boxes_yolo)
-        cv2.rectangle(node.im_output,(node.search_area.xmin, node.search_area.ymin),(node.search_area.xmax, node.search_area.ymax),(255,255,255),2)
         node.image_pub.publish(node.bridge.cv2_to_imgmsg(node.im_output, "bgra8")) 
       
     node.rate.sleep()
