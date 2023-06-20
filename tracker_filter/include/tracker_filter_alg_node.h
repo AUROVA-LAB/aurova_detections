@@ -51,6 +51,7 @@
 #include <pcl/registration/icp.h>
 
 #include <iostream>
+#include <fstream>
 #include <math.h>
 
 #include <sensor_msgs/Image.h>
@@ -63,6 +64,7 @@
 
 #include <detection_msgs/BoundingBox.h>
 #include <detection_msgs/BoundingBoxes.h>
+#include "ekf.h"
 
 #include <pcl/filters/statistical_outlier_removal.h>
 #include <geometry_msgs/PoseWithCovarianceStamped.h>
@@ -71,6 +73,7 @@
 #include <opencv2/imgproc/imgproc.hpp>
 #include <limits>
 #include <chrono> 
+#include <termios.h>
 
 // [publisher subscriber headers]
 
@@ -83,24 +86,37 @@
  *
  */
 
+struct labelData
+{
+  double time;
+  int ix,iy,ex,ey;
+};
+
 class TrackerFilterAlgNode : public algorithm_base::IriBaseAlgorithm<TrackerFilterAlgorithm>
 {
   private:
     typedef pcl::PointCloud<pcl::PointXYZ> PointCloud;
     ros::Publisher pc_filtered_pub; // publisher de la imagen de puntos filtrada
-    ros::Publisher goal_pub; // Goal pose
+    ros::Publisher goal_pub, gt_pub; // Goal pose
     ros::Publisher searchBB_pub; // Search bounding box
     PointCloud::Ptr pointCloud_msg;
+    geometry_msgs::PoseWithCovarianceStamped m2track_msg;
     message_filters::Subscriber<sensor_msgs::Image>range_sub;
-    message_filters::Subscriber<detection_msgs::BoundingBoxes> yolo_sub, dasiam_sub;   
+    message_filters::Subscriber<detection_msgs::BoundingBoxes> yolo_sub, dasiam_sub;
+    ros::Subscriber m2track_subscriber;   
     std::string filt_method= "median";
     // CEkfPtr ekf;
 
     //Variables
-    bool flag_rate, flag_tracking;
+    bool flag_rate, flag_tracking, flag_image, metrics, m2track_obs;
+    std::ofstream metrics_file;
+    std::vector<labelData> ground_truth; u_int ground_truth_id; 
     double last_detection;
-    Eigen::Vector2d prev_state;
-
+    Eigen::Matrix<double, 2, 1> last_state, last_ground_truth;
+    CEkfPtr ekf, ground_truth_ekf;
+    Eigen::MatrixXf data_metrics;
+    uint im_rows,im_cols;
+    double time_pointcloud, time_update;
    /**
     * \brief config variable
     *
@@ -126,9 +142,12 @@ class TrackerFilterAlgNode : public algorithm_base::IriBaseAlgorithm<TrackerFilt
     ~TrackerFilterAlgNode(void);
 
     void callback(const sensor_msgs::ImageConstPtr& in_image, const detection_msgs::BoundingBoxesConstPtr& yolo,const boost::shared_ptr<const detection_msgs::BoundingBoxes>& dasiam);
+    void m2track_callback(const geometry_msgs::PoseWithCovarianceStampedConstPtr& data);
     int remap(int x, int limit);
+    float get_iou(detection_msgs::BoundingBox bb1, detection_msgs::BoundingBox bb2);
+    char getch();
 
-    Eigen::Vector2d boundingBox2point(detection_msgs::BoundingBox& bb, cv::Mat& im_range, const Eigen::Ref<const Eigen::MatrixXf>& data_metrics);
+    Eigen::Vector2d boundingBox2point(detection_msgs::BoundingBox& bb, cv::Mat& im_range);
 
   protected:
    /**

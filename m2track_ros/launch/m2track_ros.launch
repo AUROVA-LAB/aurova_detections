@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<!-- -->
+<launch>
+    <arg name="tracked_object_topic" default="/m2track"/>
+    <arg name="depth_topic" default="/ouster/range_image"/>
+    <arg name="intensity_topic" default="/ouster/signal_image"/>
+    <arg name="target_topic" default="/target"/>
+    <arg name="search_area_topic" default="/tracker_filter/search_area"/>
+    <arg name="inference_path" default="/home/ros_ws/src/Open3DSOT"/>
+  
+  <node pkg="m2track_ros" name="m2track_ros" type="m2track_ros.py" output="screen">
+    <remap from="~tracked_object"  to="$(arg tracked_object_topic)"/>
+    <remap from="~depth_topic" to="$(arg depth_topic)"/>
+    <remap from="~intensity_topic" to="$(arg intensity_topic)"/>
+    <remap from="~target"   to="$(arg target_topic)"/>
+    <remap from="~search_area_topic"   to="$(arg search_area_topic)"/>
+    <param name="~inference_path"   value="$(arg inference_path)"/>
+  </node>
+
+</launch>
