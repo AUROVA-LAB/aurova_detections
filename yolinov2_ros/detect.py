@@ -16,6 +16,8 @@ import numpy as np
 def callback(merged_in):
     global flag, bridge, merge_img_pub, model, test_transform, DEVICE
     if flag:
+        ini = rospy.Time.now().to_sec()
+
         image = bridge.imgmsg_to_cv2(merged_in, "bgr8")
 
         image = test_transform(image=image)
@@ -29,9 +31,14 @@ def callback(merged_in):
         detection = pred.cpu().detach().numpy()
         final_mask = detection[0][0].astype(np.uint8)*255
         image_message = bridge.cv2_to_imgmsg(final_mask, "mono8")
+        image_message.header.seq = merged_in.header.seq
         image_message.header.stamp = merged_in.header.stamp
         image_message.header.frame_id = "os_sensor"
         detection_img_pub.publish(image_message)
+
+        end = rospy.Time.now().to_sec()
+        print(f"Time: {end - ini}")
+
 
 
 
@@ -63,8 +70,9 @@ if __name__ == '__main__':
         ]
     )
     print(f"Network model loaded with {DEVICE}")
+    print("seq + time")
 
-    r = rospy.Rate(20)
+    r = rospy.Rate(100)
     while not rospy.is_shutdown():
         flag=True
         r.sleep()

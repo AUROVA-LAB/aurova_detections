@@ -57,9 +57,9 @@ RUN cd ${HOME}/ros_ws/src/yolinov2/ && chmod +x models.py
 RUN cd ${HOME}/ros_ws/src/yolinov2/ && chmod +x dataset.py
 
 ## Compile the package
-#RUN cd ${HOME}/ros_ws/src/ /bin/bash -c "source source /opt/ros/${ROS_DISTRO}/setup.bash; catkin build yolinov2"
-#CMD python3 home/mice85/ros_ws/src/yolinov2/detect.py
-CMD python3 home/mice85/ros_ws/src/yolinov2/train.py
+RUN cd ${HOME}/ros_ws/src/ /bin/bash -c "source source /opt/ros/${ROS_DISTRO}/setup.bash; catkin build yolinov2"
+CMD python3 home/mice85/ros_ws/src/yolinov2/detect.py
+#CMD python3 home/mice85/ros_ws/src/yolinov2/train.py
 
 #FROM pytorch/pytorch:1.12.0-cuda11.3-cudnn8-runtime
 
