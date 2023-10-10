@@ -32,7 +32,8 @@
   <!-- Dependencies can be catkin packages or system dependencies -->
   <exec_depend>tracker_filter</exec_depend>
   <exec_depend>detection_msgs</exec_depend>
-  
+  <exec_depend>yolact_ros_msgs</exec_depend>
+    
   <buildtool_depend>catkin</buildtool_depend>
 
 
