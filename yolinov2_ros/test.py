@@ -114,7 +114,7 @@ def test_one_image():
 
 def test_single_shot():
 
-    n_epoch = sys.argv[2]
+    n_epoch = int(sys.argv[2])
 
     model = UnetPlusPlus("resnet18", "imagenet", in_channels=3, out_channels=1).to(DEVICE)
 
@@ -132,7 +132,7 @@ def test_single_shot():
         ]
     )
 
-    id_val = sys.argv[3]
+    id_val = int(sys.argv[3])
 
     image = np.array(Image.open(PATH + "train/merged_" + str(id_val) + ".png").convert("RGB"))
 

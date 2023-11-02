@@ -15,7 +15,7 @@ sudo docker run --shm-size=6gb --ulimit memlock=-1 --ulimit stack=67108864 --gpu
 Inside the docker, run one of these command to train, detect, or test:
 
 ```
-python3 ${HOME}/ros_ws/src/yolinov2/train.py [experiment_path] [bool_load_epoch] [num_epoch] [height] [width]
+python3 ${HOME}/ros_ws/src/yolinov2/train.py [experiment_path] [num_epoch] [height] [width]  <!-- (if num_epoch == 0, random weights) -->
 ```
 
 ```
@@ -23,12 +23,12 @@ python3 ${HOME}/ros_ws/src/yolinov2/detect.py  [experiment_path] [num_epoch]
 ```
 
 ```
-python3 ${HOME}/ros_ws/src/yolinov2/test.py [experiment_path] [num_epoch] [num_test_image]
+python3 ${HOME}/ros_ws/src/yolinov2/test.py [experiment_path] [num_epoch] [num_image]
 ```
 
-An example for training:
+An example for training from epoch 149:
 ```
-python3 ${HOME}/ros_ws/src/yolinov2/train.py /docker_shared/yolinov2_shared/experiments/exp_2023-10-17/ true 149 128 288 
+python3 ${HOME}/ros_ws/src/yolinov2/train.py /docker_shared/yolinov2_shared/experiments/exp_2023-10-17/ 149 128 288 
 ```
 
 The data structure for experiment_path:

@@ -27,8 +27,8 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 BATCH_SIZE = 2
 NUM_EPOCHS = 150
 NUM_WORKERS = os.cpu_count()
-IMAGE_HEIGHT = sys.argv[5] # 288 # 2048
-IMAGE_WIDTH = sys.argv[4] # 128 
+IMAGE_HEIGHT = int(sys.argv[4]) # 288 # 2048
+IMAGE_WIDTH = int(sys.argv[3]) # 128 
 PIN_MEMORY = True
 LOAD_MODEL = False
 PATH = sys.argv[1] #"/docker_shared/yolinov2_shared/experiments/exp_2023-10-17/"
@@ -125,8 +125,8 @@ def main():
 	model = UnetPlusPlus(BACKBONE, None, in_channels=3, out_channels=1).to(DEVICE)
 	#model = UnetPlusPlus(BACKBONE, "imagenet", in_channels=3, out_channels=1).to(DEVICE)
 	#model = UNET_SMP(BACKBONE, "imagenet", in_channels=3, out_channels=1).to(DEVICE)
-	n_epoch = sys.argv[3]
-	if sys.argv[2]:
+	n_epoch = int(sys.argv[2])
+	if n_epoch > 0:
 		load_checkpoint(torch.load(PATH + "epochs/checkpoint_epoch_" + str(n_epoch) + ".pth.tar"), model)
 	#loss fn
 	loss_fn = nn.BCEWithLogitsLoss()
@@ -164,7 +164,7 @@ def main():
 			"optimizer": optimizer.state_dict(),
 		}
 
-		save_checkpoint(checkpoint, epoch, PATH + "/epochs")
+		save_checkpoint(checkpoint, epoch, PATH + "epochs")
 
 		#val_loss, val_dice, val_iou = dice_iou_calculation(val_loader, model, loss_fn)
 		#wandb.log({'epoch': epoch + 1, 'val_loss': val_loss})
