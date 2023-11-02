@@ -15,15 +15,15 @@ sudo docker run --shm-size=6gb --ulimit memlock=-1 --ulimit stack=67108864 --gpu
 Inside the docker, run one of these command to train, detect, or test:
 
 ```
-python3 ${HOME}/ros_ws/src/yolinov2/train.py [path] [bool_load_epoch] [num_epoch] [height] [width]
+python3 ${HOME}/ros_ws/src/yolinov2/train.py [experiment_path] [bool_load_epoch] [num_epoch] [height] [width]
 ```
 
 ```
-python3 ${HOME}/ros_ws/src/yolinov2/detect.py  [path] [num_epoch]
+python3 ${HOME}/ros_ws/src/yolinov2/detect.py  [experiment_path] [num_epoch]
 ```
 
 ```
-python3 ${HOME}/ros_ws/src/yolinov2/test.py [path] [num_epoch] [num_test_image]
+python3 ${HOME}/ros_ws/src/yolinov2/test.py [experiment_path] [num_epoch] [num_test_image]
 ```
 
 An example for training:
