@@ -10,6 +10,7 @@ from models import UnetPlusPlus, PSPNet, DeepLabV3Plus
 from utils import *
 #import wandb
 import os
+import sys
 
 from segmentation_models_pytorch.losses import DiceLoss, JaccardLoss, FocalLoss
 
@@ -26,15 +27,15 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 BATCH_SIZE = 2
 NUM_EPOCHS = 150
 NUM_WORKERS = os.cpu_count()
-IMAGE_HEIGHT = 2048
-IMAGE_WIDTH = 128 
+IMAGE_HEIGHT = sys.argv[5] # 288 # 2048
+IMAGE_WIDTH = sys.argv[4] # 128 
 PIN_MEMORY = True
 LOAD_MODEL = False
-PATH = "/docker_shared/yolinov2_shared/experiments/exp_2023-02-13"
-TRAIN_IMG_DIR = PATH + "/train/"
-TRAIN_MASK_DIR = PATH + "/train_masks/"
-VAL_IMG_DIR = PATH + "/val/"
-VAL_MASK_DIR = PATH + "/val_masks/"
+PATH = sys.argv[1] #"/docker_shared/yolinov2_shared/experiments/exp_2023-10-17/"
+TRAIN_IMG_DIR = PATH + "train/"
+TRAIN_MASK_DIR = PATH + "train_masks/"
+VAL_IMG_DIR = PATH + "val/"
+VAL_MASK_DIR = PATH + "val_masks/"
 
 
 # training function, this train only runs an epoch
@@ -124,8 +125,9 @@ def main():
 	model = UnetPlusPlus(BACKBONE, None, in_channels=3, out_channels=1).to(DEVICE)
 	#model = UnetPlusPlus(BACKBONE, "imagenet", in_channels=3, out_channels=1).to(DEVICE)
 	#model = UNET_SMP(BACKBONE, "imagenet", in_channels=3, out_channels=1).to(DEVICE)
-	n_epoch = 149
-	load_checkpoint(torch.load(PATH + "/epochs/checkpoint_epoch_" + str(n_epoch) + ".pth.tar"), model)
+	n_epoch = sys.argv[3]
+	if sys.argv[2]:
+		load_checkpoint(torch.load(PATH + "epochs/checkpoint_epoch_" + str(n_epoch) + ".pth.tar"), model)
 	#loss fn
 	loss_fn = nn.BCEWithLogitsLoss()
 	#loss_fn = JaccardLoss('binary')

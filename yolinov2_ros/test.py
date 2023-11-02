@@ -13,11 +13,11 @@ import sys
 
 
 
-PATH = "/docker_shared/yolinov2_shared/experiments/exp_2023-02-13/"
+PATH = sys.argv[1] #"/docker_shared/yolinov2_shared/experiments/exp_2023-10-17/"
 TEST_IMG_DIR = PATH
 TEST_MASK_DIR = PATH
 TEST_PREDS_DIR = PATH
-IMAGE_HEIGHT = 2048
+IMAGE_HEIGHT = 288
 IMAGE_WIDTH = 128  # 240 for unet, 256 for unet smp with resnet18
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 BATCH_SIZE = 8
@@ -114,7 +114,7 @@ def test_one_image():
 
 def test_single_shot():
 
-    n_epoch = sys.argv[1]
+    n_epoch = sys.argv[2]
 
     model = UnetPlusPlus("resnet18", "imagenet", in_channels=3, out_channels=1).to(DEVICE)
 
@@ -132,7 +132,7 @@ def test_single_shot():
         ]
     )
 
-    id_val = sys.argv[2]
+    id_val = sys.argv[3]
 
     image = np.array(Image.open(PATH + "train/merged_" + str(id_val) + ".png").convert("RGB"))
 

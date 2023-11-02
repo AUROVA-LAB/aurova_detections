@@ -12,6 +12,7 @@ from models import UnetPlusPlus, PSPNet, DeepLabV3Plus
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 import numpy as np
+import sys
 
 def callback(merged_in):
     global flag, bridge, merge_img_pub, model, test_transform, DEVICE
@@ -54,9 +55,9 @@ if __name__ == '__main__':
     detection_img_pub = rospy.Publisher('/ground_lines_img', Image, queue_size=10)
 
     # Load segmentation model (yolinov2)
-    PATH = "/docker_shared/yolinov2_shared/experiments/exp_2023-02-13/"
+    PATH = sys.argv[1] #"/docker_shared/yolinov2_shared/experiments/exp_2023-10-17/"
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-    n_epoch = 149
+    n_epoch = sys.argv[2] #149
     model = UnetPlusPlus("resnet18", None, in_channels=3, out_channels=1).to(DEVICE)
     load_checkpoint(torch.load(PATH + "epochs/checkpoint_epoch_" + str(n_epoch) + ".pth.tar"), model)
     test_transform = A.Compose(
