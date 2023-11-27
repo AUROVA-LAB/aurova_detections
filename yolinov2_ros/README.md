@@ -9,7 +9,7 @@ sudo docker build -t yolinov2 .
 
 Run the docker (for example's user: mice85)
 ```
-sudo docker run --shm-size=6gb --ulimit memlock=-1 --ulimit stack=67108864 --gpus "all" --rm -it -u root --name yolinov2_kitti --net host -v /home/mice85/docker_shared:/docker_shared yolinov2_kitti
+sudo docker run --shm-size=6gb --ulimit memlock=-1 --ulimit stack=67108864 --gpus "all" --rm -it -u root --name yolinov2 --net host -v /home/mice85/docker_shared:/docker_shared yolinov2
 ```
 
 Inside the docker, run one of these command to train, detect, or test:
