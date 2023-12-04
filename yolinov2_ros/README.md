@@ -31,6 +31,11 @@ An example for training from epoch 149:
 python3 ${HOME}/ros_ws/src/yolinov2/train.py /docker_shared/yolinov2_shared/experiments/exp_2023-10-17/ 149 128 288 
 ```
 
+An example for detections from epoch 149:
+```
+python3 ${HOME}/ros_ws/src/yolinov2/detect.py /docker_shared/yolinov2_shared/experiments/exp_2023-02-13/ 149 
+```
+
 The data structure for experiment_path:
 ### File tree
 └── ~/experiment_path   
