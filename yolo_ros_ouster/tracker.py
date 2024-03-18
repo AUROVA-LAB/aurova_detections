@@ -145,7 +145,7 @@ class FusionTracker:
         #If the target is lost by YOLO and the covariance of the ekf filter is greater than this value, chanbe to select mode.
         self.limit_covariance=rospy.get_param("~limit_covariance", 5.0) 
 
-        self.output_video_dir=rospy.get_param("~output_video_dir", 0.1) #More restrictive to re-identify the target during search mode
+        self.output_video_dir=rospy.get_param("~output_video_dir", 0.1) 
         # Define the operation modes
         self.SELECT_TARGET_MODE, self.SEARCH_MODE, self.TRACK_MODE = 0, 1, 2 #Global modes of the detector/tracker
         self.TRACKER_NORMAL, self.TRACKER_LEFT, self.TRACKER_RIGHT =  0, 1, 2 #Tracker modes for considering that the image is 360 degres.

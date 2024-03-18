@@ -2,7 +2,7 @@
 <package format="2">
   <name>aurova_detections</name>
   <version>0.0.0</version>
-  <description>The aurova_multirobot_simulator package</description>
+  <description>The aurova_detections metapackage</description>
 
   <!-- One maintainer tag required, multiple allowed, one person per tag -->
   <!-- Example:  -->

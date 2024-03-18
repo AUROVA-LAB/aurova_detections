@@ -27,7 +27,7 @@
     <arg name="output_topic_dasiamrpn"          default="/tracker/dasiamrpn"/>
 
     <!-- Topic annotated image -->
-    <arg name="output_image_topic"      default="/yolov5/image_out"/>
+    <arg name="output_image_topic"      default="/tracker/image_out"/>
 
     <node pkg="yolov5_ros" name="merge_channels" type="merge_channels_ouster.py" output="screen"></node>
 
