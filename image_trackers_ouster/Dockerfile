@@ -15,7 +15,6 @@ RUN python -m pip install --upgrade pip
 RUN pip uninstall -y nvidia-tensorboard nvidia-tensorboard-plugin-dlprof
 RUN pip install coremltools onnx gsutil notebook wandb>=0.12.2
 # RUN pip install --no-cache -U torch torchvision numpy Pillow
-# RUN pip install --no-cache torch==1.10.0+cu113 torchvision==0.11.1+cu113 -f https://download.pytorch.org/whl/cu113/torch_stable.html
 
 # Create working directory
 # RUN mkdir -p /usr/src/app
@@ -103,22 +102,25 @@ RUN cd ~/opencv/build/ && make install
 RUN cd ~/opencv/build/ && ldconfig
 RUN rm -rf ~/opencv*
 
-COPY ./dasiamrpn* /home/ros_ws/src/yolov5_ros/models/
-COPY ./best.pt /home/ros_ws/src/yolov5_ros/models/
-COPY ./tracker.launch /home/ros_ws/src/yolov5_ros/launch/
-COPY ./tracker.py /home/ros_ws/src/yolov5_ros/src/
-COPY ./yolov5.launch /home/ros_ws/src/yolov5_ros/launch/
+COPY ./models/dasiamrpn* /home/ros_ws/src/yolov5_ros/models/
+COPY ./models/best.pt /home/ros_ws/src/yolov5_ros/models/
+COPY ./models/coco128.yaml /home/ros_ws/src/yolov5_ros/models/
+COPY ./launch/tracker.launch /home/ros_ws/src/yolov5_ros/launch/
+COPY ./launch/yolov5.launch /home/ros_ws/src/yolov5_ros/launch/
 COPY ./upsampling.py /usr/local/lib/python3.8/dist-packages/torch/nn/modules/
 COPY ./Arial.ttf /home/.config/Ultralytics/
-COPY ./yolo.py /home/ros_ws/src/yolov5_ros/src/yolov5/models/
-COPY ./detect.py /home/ros_ws/src/yolov5_ros/src/
-COPY ./merge_channels_ouster.py /home/ros_ws/src/yolov5_ros/src/
+COPY ./models/yolo.py /home/ros_ws/src/yolov5_ros/src/yolov5/models/
+COPY ./src/detect.py /home/ros_ws/src/yolov5_ros/src/
+COPY ./src/merge_channels_ouster.py /home/ros_ws/src/yolov5_ros/src/
+COPY ./src/tracker.py /home/ros_ws/src/yolov5_ros/src/
 COPY ./CMakeLists.txt /home/ros_ws/src/yolov5_ros/
 
 # # Make program executable
 RUN cd /home/ros_ws/src/yolov5_ros/src/ && chmod +x tracker.py
 RUN cd /home/ros_ws/src/yolov5_ros/src/ && chmod +x detect.py
 RUN cd /home/ros_ws/src/yolov5_ros/src/ && chmod +x merge_channels_ouster.py
+
+RUN pip install --no-cache torch==1.10.0+cu113 torchvision==0.11.1+cu113 -f https://download.pytorch.org/whl/cu113/torch_stable.html
 
 #Detect
 #CMD export PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python && cd /home/ros_ws/ && /bin/bash -c "source devel/setup.bash; catkin_make; source devel/setup.bash; roslaunch yolov5_ros detectlaunch"

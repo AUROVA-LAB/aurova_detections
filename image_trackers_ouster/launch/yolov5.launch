@@ -1,7 +1,7 @@
 <launch>
     <!-- Detection configuration -->
-    <arg name="weights"               default="/home/alolivas/aurova-lab/aurova_ws/src/aurova_detections/yolo_ros_ouster/best.pt"/>
-    <arg name="data"                  default="/home/alolivas/aurova-lab/aurova_ws/src/aurova_detections/yolo_ros_ouster/coco128.yaml"/>
+    <arg name="weights"               default="/home/ros_ws/src/yolov5_ros/models/best.pt"/>
+    <arg name="data"                  default="/home/ros_ws/src/yolov5_ros/models/coco128.yaml"/>
     <arg name="confidence_threshold"  default="0.5"/>
     <arg name="iou_threshold"         default="0.01"/>
     <arg name="maximum_detections"    default="30"/>

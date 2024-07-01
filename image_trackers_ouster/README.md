@@ -1,4 +1,4 @@
-# ROS YOLOv5 detector and tracker
+# ROS YOLOv5 and DaSiamRPN trackers
 
 This package uses the Deep Neural Network YOLOv5 to detect persons with the images obtained by a 3D LIDAR (Ouster OS1), with the channels signal, reflec, nearir and range. The tracker uses this neural network to detect the persons but also DaSiamRPN tracker of OpenCV, which is a Siamese Neural Network. We create a Docker to use these neural networks with CUDA support.
 
