@@ -73,7 +73,7 @@ if __name__ == '__main__':
     print(f"Network model loaded with {DEVICE}")
     print("seq + time")
     
-    rate = rospy.get_param('/ground_lines_detection/rate', 100)
+    rate = rospy.get_param('/ground_lines_detection/rate', 10)
     r = rospy.Rate(rate)
     while not rospy.is_shutdown():
         flag=True

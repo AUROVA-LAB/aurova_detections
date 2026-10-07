@@ -163,6 +163,8 @@ include_directories(
 catkin_install_python(PROGRAMS
   src/detect.py
   src/merge_channels_ouster.py
+  src/tracker.py
+  src/tracker_high_precision.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

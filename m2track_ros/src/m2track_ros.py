@@ -79,6 +79,12 @@ class pc_tracker_Node:
       #Note: 65536=2**16, reducing calculations
       depth = (depth*(261/65536)).transpose()
       intensity = self.bridge.imgmsg_to_cv2(intensity_image).transpose()
+      downsampled_depth, downsampled_intensity = np.zeros((2048,64)), np.zeros((2048,64))
+      for i in range(64):
+         downsampled_depth[:,i]=depth[:,i*2]
+         downsampled_intensity[:,i]=intensity[:,i*2]
+      depth=downsampled_depth
+      intensity=downsampled_intensity
       iy=np.arange(depth.shape[1]); ix=np.arange(depth.shape[0])
       if self.search_area is None:
         self.search_area=BoundingBox()
@@ -100,7 +106,7 @@ class pc_tracker_Node:
         iy=iy[search_area.ymin:search_area.ymax]
 
 
-      sang_h=np.diagflat(np.sin((22.5-iy*(45.0/128.0))*np.pi/180.0))
+      sang_h=np.diagflat(np.sin((22.5-iy*(45.0/64.0))*np.pi/180.0))
       ang_w=(184.0 - (360.0/2048.0)*ix)*np.pi/180.0
       sang_w=np.diagflat(np.sin(ang_w)); cang_w=np.diagflat(np.cos(ang_w))
       Z=np.matmul(depth,sang_h)

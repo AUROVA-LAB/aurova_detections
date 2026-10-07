@@ -145,7 +145,6 @@ class FusionTracker:
         #If the target is lost by YOLO and the covariance of the ekf filter is greater than this value, chanbe to select mode.
         self.limit_covariance=rospy.get_param("~limit_covariance", 5.0) 
 
-        self.output_video_dir=rospy.get_param("~output_video_dir", 0.1) 
         # Define the operation modes
         self.SELECT_TARGET_MODE, self.SEARCH_MODE, self.TRACK_MODE = 0, 1, 2 #Global modes of the detector/tracker
         self.TRACKER_NORMAL, self.TRACKER_LEFT, self.TRACKER_RIGHT =  0, 1, 2 #Tracker modes for considering that the image is 360 degres.
@@ -206,8 +205,6 @@ class FusionTracker:
         pred = non_max_suppression(
             pred, self.conf_thres, self.iou_thres, self.classes, self.agnostic_nms, max_det=self.max_det
         )
-
-        ### To-do move pred to CPU and fill BoundingBox messages
         
         # Process predictions 
         det = pred[0].cpu().numpy()
@@ -295,7 +292,7 @@ class FusionTracker:
             start=time.clock_gettime_ns(time.CLOCK_THREAD_CPUTIME_ID)
             best_corr=0
             bounding_boxes = self.detectYolo5v(im.copy())
-            candidate=None; best_corr2=0
+            candidate=None; best_corr2 = 0
             for bbox in bounding_boxes:
                 iou=self.get_iou(bbox,self.search_area)
                 if iou>0:
@@ -306,21 +303,23 @@ class FusionTracker:
                         #Use the percentage of are in the intersection of the bounding boxes.
                         corr+=iou/2
                         if corr>best_corr:
-                            best_corr=corr; best_bbox=bbox; best_descriptor=descriptor
-                    elif corr>best_corr2: candidate=bbox; best_corr2=corr
-            
+                            best_corr=corr; best_bbox=bbox; best_descriptor=descriptor;
+                    else:
+                        corr+=iou/2
+                        if corr>best_corr2:
+                            candidate=bbox; best_corr2=corr
             if best_corr>0:
                 self.search_start=rospy.get_time(); self.tracker_start=rospy.get_time()
                 #Use the intersection with the previous bounding box to calculate the covariance.
                 #We use the actuar target covariance because a higher covariance in the target will 
                 #produce a higher search area and therefore more desviation.
-                self.yolo_tracker.covariance=self.target_covariance*(1.0-self.get_iou(best_bbox,self.yolo_tracker.bbox))+0.3
+                self.yolo_tracker.covariance=self.target_covariance*(1.0-self.get_iou(best_bbox,self.yolo_tracker.bbox))+0.6
                 self.yolo_tracker.bbox=best_bbox
                 self.yolo_tracker.draw_rectangles(self.im_output,(0,0,255))
                 # Update descriptor
                 self.target_descriptor=self.target_descriptor*0.5+best_descriptor*0.5
-                if self.reset_dasiam or (self.distance_center(self.yolo_tracker.bbox,self.search_area)< self.distance_center(self.dasiam_tracker.bbox,self.search_area)
-                                          and self.get_iou(self.yolo_tracker.bbox,self.dasiam_tracker.bbox)<0.25):
+                if self.reset_dasiam or ((self.distance_center(self.yolo_tracker.bbox,self.search_area)< self.distance_center(self.dasiam_tracker.bbox,self.search_area)
+                                          and self.get_iou(self.yolo_tracker.bbox,self.dasiam_tracker.bbox)<0.25)):
                     self.dasiam_tracker.bbox=best_bbox
                     s,n,r,depth=cv2.split(im)
                     frame=cv2.merge([s,n,r])
@@ -337,8 +336,8 @@ class FusionTracker:
             elif rospy.get_time()-self.search_start>self.search_time and candidate is not None:
                 if self.target_covariance<self.limit_covariance:
                     self.search_start=rospy.get_time(); self.tracker_start=rospy.get_time()
+                    self.yolo_tracker.covariance=self.target_covariance*(1.0-self.get_iou(candidate,self.yolo_tracker.bbox))+0.6
                     self.yolo_tracker.bbox=candidate
-                    self.yolo_tracker.covariance=self.target_covariance
                     self.yolo_tracker.draw_rectangles(self.im_output,(0,0,255))
                     # New descriptor
                     segment_frame, mask=self.segment_person(im,candidate)
@@ -409,7 +408,7 @@ class FusionTracker:
         # Draw bounding box
         self.prev_frame=frame
         self.dasiam_tracker.draw_rectangles(self.im_output)
-        self.dasiam_tracker.covariance=self.target_covariance*(1.0-self.get_iou(prev_bbox,self.dasiam_tracker.bbox))+0.3
+        self.dasiam_tracker.covariance=self.target_covariance*(1.0-self.get_iou(prev_bbox,self.dasiam_tracker.bbox))+0.6
         
         end=time.clock_gettime_ns(time.CLOCK_THREAD_CPUTIME_ID)
         self.track_t=end-start if self.track_t==0 else (self.track_t+end-start)/2
@@ -478,7 +477,7 @@ class FusionTracker:
             if mask is not None:
                 part_mask = mask[int(0.2*i*shape[0]):int(0.2*(i+1)*shape[0])]
             for channel in range(3):
-                hist=cv2.calcHist([part_frame], [channel], histSize=[32], mask=part_mask, ranges=[0,256])
+                hist=cv2.calcHist([part_frame], [channel], histSize=[64], mask=part_mask, ranges=[0,256])
                 cv2.normalize(hist,hist,0.0,1.0,cv2.NORM_MINMAX,dtype=cv2.CV_32F)
                 descriptor.append(hist)
         descriptor=np.array(descriptor); descriptor=descriptor.flatten()
@@ -555,7 +554,7 @@ class FusionTracker:
             return iou
     
     def distance_center(self, bbox1, bbox2):
-        return np.sqrt(((bbox1.xmax-bbox1.xmin)/2-(bbox2.xmax-bbox2.xmin)/2)**2+((bbox1.ymax-bbox1.ymin)/2-(bbox2.ymax-bbox2.ymin)/2)**2)
+        return np.sqrt(((bbox1.xmin+(bbox1.xmax-bbox1.xmin)/2)-(bbox2.xmin+(bbox2.xmax-bbox2.xmin)/2))**2+((bbox1.ymin+(bbox1.ymax-bbox1.ymin)/2)-(bbox2.ymin+(bbox2.ymax-bbox2.ymin)/2))**2)
 
     def keyboard_callback(self, input):
         if input=='s':
@@ -616,6 +615,7 @@ def main_thread(node: FusionTracker):
             bbox.probability=node.yolo_tracker.covariance
             bounding_boxes_yolo.bounding_boxes.append(bbox) #Append the bounding boxes which are between the limits of the image.
         node.yolo_pub.publish(bounding_boxes_yolo)
+        cv2.rectangle(node.im_output,(node.search_area.xmin,node.search_area.ymin),(node.search_area.xmax,node.search_area.ymax), (255,255,0),2,1)
         node.image_pub.publish(node.bridge.cv2_to_imgmsg(node.im_output, "bgra8")) 
       
     node.rate.sleep()

@@ -101,6 +101,7 @@ RUN cd ~/opencv/build/ && make -j7
 RUN cd ~/opencv/build/ && make install 
 RUN cd ~/opencv/build/ && ldconfig
 RUN rm -rf ~/opencv*
+RUN pip install --no-cache torch==1.10.0+cu113 torchvision==0.11.1+cu113 -f https://download.pytorch.org/whl/cu113/torch_stable.html
 
 COPY ./models/dasiamrpn* /home/ros_ws/src/yolov5_ros/models/
 COPY ./models/best.pt /home/ros_ws/src/yolov5_ros/models/
@@ -119,8 +120,6 @@ COPY ./CMakeLists.txt /home/ros_ws/src/yolov5_ros/
 RUN cd /home/ros_ws/src/yolov5_ros/src/ && chmod +x tracker.py
 RUN cd /home/ros_ws/src/yolov5_ros/src/ && chmod +x detect.py
 RUN cd /home/ros_ws/src/yolov5_ros/src/ && chmod +x merge_channels_ouster.py
-
-RUN pip install --no-cache torch==1.10.0+cu113 torchvision==0.11.1+cu113 -f https://download.pytorch.org/whl/cu113/torch_stable.html
 
 #Detect
 #CMD export PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python && cd /home/ros_ws/ && /bin/bash -c "source devel/setup.bash; catkin_make; source devel/setup.bash; roslaunch yolov5_ros detectlaunch"

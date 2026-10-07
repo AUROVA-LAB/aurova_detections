@@ -1,5 +1,5 @@
 # Start FROM Nvidia PyTorch image
-FROM nvidia/cuda:11.7.0-devel-ubuntu20.04
+FROM nvidia/cuda:11.7.1-devel-ubuntu20.04
 ARG DEBIAN_FRONTEND=noninteractive
 
 COPY requirement.txt .
@@ -10,9 +10,11 @@ RUN add-apt-repository -y ppa:deadsnakes/ppa
 RUN apt install -y python3.8
 RUN apt install python-is-python3
 RUN apt update && apt install -y zip htop screen libgl1-mesa-glx python3-pip git
-RUN pip install torch torchvision torchaudio
+RUN pip install torch==2.0.1 torchvision==0.15.2 torchaudio==2.0.2
 RUN pip install --no-cache -r requirement.txt
 # Error using pomegranate, it was solved reinstalling it.
+RUN pip uninstall cython -y
+RUN pip install cython==0.29.17
 RUN pip install pomegranate==0.14.8
 RUN sh -c 'echo "deb http://packages.ros.org/ros/ubuntu $(lsb_release -sc) main" > /etc/apt/sources.list.d/ros-latest.list'
 RUN apt install -y curl 
@@ -34,14 +36,14 @@ RUN mkdir -p /home/ros_ws/src
 # Initialize the workspace
 RUN pip install empy catkin_pkg
 RUN cd /home/ros_ws/src && bash -c 'source /opt/ros/noetic/setup.bash && catkin_init_workspace'
-RUN cd /home/ros_ws && bash -c 'source /opt/ros/noetic/setup.bash && catkin_make'
+RUN cd /home/ros_ws && bash -c 'source /opt/ros/noetic/setup.bash && CMAKE_POLICY_VERSION_MINIMUM=3.5 catkin_make'
 # COPY ./update_bashrc /sbin/update_bashrc
 # RUN sudo chmod +x /sbin/update_bashrc ; sudo chown ros /sbin/update_bashrc ; sync ; /bin/bash -c /sbin/update_bashrc ; sudo rm /sbin/update_bashrc
 
 # # Install Open3DSOT
 RUN cd /home/ros_ws/src/ && git clone https://github.com/Ghostish/Open3DSOT.git 
 # # Compile the package
-RUN cd /home/ros_ws/ && bash -c 'source /opt/ros/noetic/setup.bash && catkin_make'
+RUN cd /home/ros_ws/ && bash -c 'source /opt/ros/noetic/setup.bash && CMAKE_POLICY_VERSION_MINIMUM=3.5 catkin_make'
 
 ## Install this package
 RUN apt update && apt install -y ros-noetic-geometry-msgs ros-noetic-visualization-msgs ros-noetic-sensor-msgs ros-noetic-cv-bridge \

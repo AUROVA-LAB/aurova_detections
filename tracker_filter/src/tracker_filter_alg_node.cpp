@@ -298,6 +298,9 @@ void TrackerFilterAlgNode::callback(const ImageConstPtr& in_image,const boost::s
     new_obs = ekf->update(obs);
   }
 
+  Eigen::Matrix<double, 2, 1> state; Eigen::Matrix<double, 2, 2> covariance;
+  ekf->getStateAndCovariance(state,covariance);
+
   float dist_yolo=-1, iou_yolo=-1; //In previous version, dasiam metrics were written before.
   if (yolo_msg->bounding_boxes.size()>0 && !(config_.mute_image_trackers && flag_tracking)){
     detection_msgs::BoundingBox bb=yolo_msg->bounding_boxes[0];
@@ -306,7 +309,10 @@ void TrackerFilterAlgNode::callback(const ImageConstPtr& in_image,const boost::s
     //Covariance is greater in the angle of detection, because the depth estimation may have errors.
     Eigen::Matrix2d cov=Eigen::Matrix2d::Zero(), rot=Eigen::Matrix2d::Zero();
     rot=Eigen::Rotation2Dd(atan2(obs.y,obs.x));
-    cov(0,0)=yolo_msg->bounding_boxes[0].probability*2; cov(1,1)=yolo_msg->bounding_boxes[0].probability;
+    
+    float cov_value = yolo_msg->bounding_boxes[0].probability;
+    // cov_value+=pow(obs.x-state(0),2)+pow(obs.y-state(1),2); //Increase covariance if the detection is far from the prediction.
+    cov(0,0)=cov_value*2; cov(1,1)=cov_value;
     obs.sigma=rot*cov*rot.transpose();
     bool ok = ekf->update(obs);
     new_obs = new_obs || ok;
@@ -342,7 +348,9 @@ void TrackerFilterAlgNode::callback(const ImageConstPtr& in_image,const boost::s
     ekf::Observation obs; obs.x=point(0); obs.y=point(1);
     Eigen::Matrix2d cov=Eigen::Matrix2d::Zero(), rot=Eigen::Matrix2d::Zero();
     rot=Eigen::Rotation2Dd(atan2(obs.y,obs.x));
-    cov(0,0)=dasiam_msg->bounding_boxes[0].probability*2; cov(1,1)=dasiam_msg->bounding_boxes[0].probability;
+    float cov_value = dasiam_msg->bounding_boxes[0].probability;
+    // cov_value+=(pow(obs.x-state(0),2)+pow(obs.y-state(1),2)); 
+    cov(0,0)=cov_value*2; cov(1,1)=cov_value;
     obs.sigma=rot*cov*rot.transpose();
     bool ok = ekf->update(obs);
     new_obs = ok || new_obs;
@@ -364,7 +372,6 @@ void TrackerFilterAlgNode::callback(const ImageConstPtr& in_image,const boost::s
     else metrics_file<<dist_yolo<<" "<<iou_yolo<<" ";
   }
 
-  Eigen::Matrix<double, 2, 1> state; Eigen::Matrix<double, 2, 2> covariance;
   ekf->getStateAndCovariance(state,covariance);
 
   if(metrics){
@@ -390,13 +397,18 @@ void TrackerFilterAlgNode::callback(const ImageConstPtr& in_image,const boost::s
     
     search_bbox.ymin=0; search_bbox.ymax=img_range.rows;
     float ang_w=atan2(state(1),state(0));
-    float ang_wmin=atan2(state(1)+(config_.filter_radious*1.5+covariance(1,1))*cos(ang_w),state(0)-(config_.filter_radious*1.5+covariance(0,0))*sin(ang_w));
-    ang_wmin = ang_wmin*180.0/M_PI;
-    search_bbox.xmin = int((184 - ang_wmin)*(2048.0/360.0));
+    // float ang_wmin=atan2(state(1)+(config_.filter_radious*1.5+covariance(1,1))*cos(ang_w),state(0)-(config_.filter_radious*1.5+covariance(0,0))*sin(ang_w));
+    Eigen::Vector2d aux,normal;
+    normal(0)=sin(ang_w); normal(1)=-cos(ang_w);
+    aux = normal/sqrt(normal.transpose()*covariance.inverse()*normal);
+    float ang_wmin=atan2(state(1)+aux(1),state(0)+aux(0));
+    ang_wmin = ang_wmin*180.0/M_PI -config_.theta_w;
+    search_bbox.xmax = int((184 - ang_wmin)*(2048.0/360.0));
 
-    float ang_wmax=atan2(state(1)-(config_.filter_radious*1.5+covariance(1,1))*cos(ang_w),state(0)+(config_.filter_radious*1.5+covariance(0,0))*sin(ang_w));
-    ang_wmax = ang_wmax*180.0/M_PI;
-    search_bbox.xmax = int((184 - ang_wmax)*(2048.0/360.0));
+    // float ang_wmax=atan2(state(1)-(config_.filter_radious*1.5+covariance(1,1))*cos(ang_w),state(0)+(config_.filter_radious*1.5+covariance(0,0))*sin(ang_w));
+    float ang_wmax=atan2(state(1)-aux(1),state(0)-aux(0));
+    ang_wmax = ang_wmax*180.0/M_PI+config_.theta_w;
+    search_bbox.xmin = int((184 - ang_wmax)*(2048.0/360.0));
     if(search_bbox.xmin>search_bbox.xmax) search_bbox.xmin-=img_range.cols;
     //We use the 'probability' field to pass the covariance.
     search_bbox.probability=(covariance(0,0)+covariance(1,1))/2;
