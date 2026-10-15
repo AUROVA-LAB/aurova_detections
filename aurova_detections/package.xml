@@ -30,16 +30,15 @@
 
   <!-- The *depend tags are used to specify dependencies -->
   <!-- Dependencies can be catkin packages or system dependencies -->
-  <exec_depend>tracker_filter</exec_depend>
+  <!-- <exec_depend>tracker_filter</exec_depend> -->
   <exec_depend>detection_msgs</exec_depend>
-  <exec_depend>yolact_ros_msgs</exec_depend>
+  <!-- <exec_depend>yolact_ros_msgs</exec_depend> -->
     
-  <buildtool_depend>catkin</buildtool_depend>
+  <buildtool_depend>ament_cmake</buildtool_depend>
 
 
   <!-- The export tag contains other, unspecified, tags -->
   <export>
     <!-- Other tools can request additional information be placed here -->
-    <metapackage/>
   </export>
 </package>

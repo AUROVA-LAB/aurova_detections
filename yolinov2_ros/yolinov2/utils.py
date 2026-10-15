@@ -3,7 +3,7 @@ import os
 import torch
 import torchvision
 from torch.utils.data import DataLoader
-from dataset import SegmentationDataset
+from yolinov2.dataset import SegmentationDataset
 import pathlib
 #import wandb
 import time

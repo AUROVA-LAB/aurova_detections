@@ -23,6 +23,6 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 # SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-Header header
-Header image_header
+std_msgs/Header header
+std_msgs/Header image_header
 BoundingBox[] bounding_boxes

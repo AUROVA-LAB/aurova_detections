@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>yolinov2</name>
+  <version>1.0.0</version>
+  <description>yolinov2</description> 
+  <maintainer email="alejandro.olivas@ua.es">AOlivas</maintainer>
+
+  <license>BSD</license>
+  <author email="alejandro.olivas@ua.es">AOlivas</author>
+
+  <depend>rclpy</depend>
+
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

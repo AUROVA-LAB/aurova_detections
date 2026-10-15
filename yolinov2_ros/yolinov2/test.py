@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
-from models import UnetPlusPlus, PSPNet, DeepLabV3Plus
-from dataset import SegmentationDataset
-from utils import *
+from yolinov2.models import UnetPlusPlus, PSPNet, DeepLabV3Plus
+from yolinov2.dataset import SegmentationDataset
+from yolinov2.utils import *
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 from torch.utils.data import DataLoader

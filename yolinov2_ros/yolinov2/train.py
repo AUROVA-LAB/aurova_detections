@@ -5,9 +5,9 @@ from albumentations.pytorch import ToTensorV2
 from tqdm import tqdm
 import torch.nn as nn
 import torch.optim as optim
-from models import UnetPlusPlus, PSPNet, DeepLabV3Plus
+from yolinov2.models import UnetPlusPlus, PSPNet, DeepLabV3Plus
 #from unet import UNET, UNET_SMP
-from utils import *
+from yolinov2.utils import *
 #import wandb
 import os
 import sys

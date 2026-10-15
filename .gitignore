@@ -1,4 +1,5 @@
 #gitignore
 yolinov2_ros/experiments/*
+yolinov2_ros/exp*
 
 
