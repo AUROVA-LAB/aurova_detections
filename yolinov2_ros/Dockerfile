@@ -42,7 +42,7 @@ RUN cd /home/ubuntu/ros_ws/src/yolinov2/yolinov2 && chmod +x detect.py && \
 
 USER ubuntu
 ## Compile the package
-RUN cd /home/ubuntu/ros_ws/ && colcon build --symlink-install
+RUN cd /home/ubuntu/ros_ws/ && colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
 CMD /bin/bash -c "source /home/ubuntu/ros_ws/install/setup.bash && ros2 run yolinov2 detect /home/ubuntu/ros_ws/src/yolinov2/exp_2023-02-13/ 149"
 # CMD python3 /home/ubuntu/ros_ws/src/yolinov2/yolinov2/train.py [path] [bool_load_epoch] [num_epoch] [height] [width]
 # CMD python3 /home/ubuntu/ros_ws/src/yolinov2/yolinov2/test.py [path] [num_epoch] [num_test_image]
