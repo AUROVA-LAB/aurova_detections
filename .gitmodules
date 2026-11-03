@@ -1,0 +1,3 @@
+[submodule "image_trackers_ouster/image_trackers_ouster/yolov5"]
+	path = image_trackers_ouster/image_trackers_ouster/yolov5
+	url = https://github.com/ultralytics/yolov5.git

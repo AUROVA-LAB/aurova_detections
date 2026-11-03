@@ -1,0 +1,631 @@
+#!/usr/bin/env python3
+
+import rclpy
+import cv2
+import torch
+import torch.backends.cudnn as cudnn
+import numpy as np
+from cv_bridge import CvBridge
+from pathlib import Path
+import os
+import sys
+from copy import copy
+from rclpy.node import Node
+
+
+from sensor_msgs.msg import Image, CompressedImage
+from detection_msgs.msg import BoundingBox, BoundingBoxes
+from threading import Thread
+import termios, tty
+import time
+
+
+
+# add yolov5 submodule to path
+FILE = Path(__file__).resolve()
+ROOT = FILE.parents[0] / "yolov5"
+if str(ROOT) not in sys.path:
+    sys.path.append(str(ROOT))  # add ROOT to PATH
+ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative path
+
+# import yolov5 submodules
+from models.common import DetectMultiBackend
+from utils.general import (
+    check_img_size,
+    check_requirements,
+    non_max_suppression,
+    scale_boxes
+)
+
+from utils.torch_utils import select_device
+from utils.augmentations import letterbox
+
+
+@torch.no_grad()
+class Tracker_Base:
+    def __init__(self):
+        self.bbox=BoundingBox(); self.bb_msg=[]
+        self.net=None; self.covariance=None
+        self.img_size=None
+
+    def draw_rectangles(self,im_output, color=(255,0,0)):
+        self.bbox.ymin=max(0,self.bbox.ymin); self.bbox.ymax=min(self.img_size[1],self.bbox.ymax)
+        if self.bbox.xmin<0:
+            if self.bbox.xmax<0:
+                aux=copy(self.bbox); aux.xmin+=self.img_size[0]; aux.xmax+=self.img_size[0]
+                aux.xmin=int(aux.xmin);aux.xmax=int(aux.xmax);aux.ymin=int(aux.ymin);aux.ymax=int(aux.ymax)
+                self.bb_msg.append(aux)
+                cv2.rectangle(im_output, (aux.xmin, aux.ymin), (aux.xmax, aux.ymax), color, 2, 1)
+            else:
+                aux=copy(self.bbox); aux.xmin+=self.img_size[0]; aux.xmax=self.img_size[0]
+                aux.xmin=int(aux.xmin);aux.xmax=int(aux.xmax);aux.ymin=int(aux.ymin);aux.ymax=int(aux.ymax)
+                self.bb_msg.append(aux)
+                aux2=copy(self.bbox); aux2.xmin=0
+                aux2.xmin=int(aux2.xmin);aux2.xmax=int(aux2.xmax);aux2.ymin=int(aux2.ymin);aux2.ymax=int(aux2.ymax)
+                self.bb_msg.append(aux2)
+                cv2.rectangle(im_output, (aux.xmin, aux.ymin), (aux.xmax, aux.ymax), color, 2, 1)
+                cv2.rectangle(im_output, (aux2.xmin, aux2.ymin), (aux2.xmax, aux2.ymax), color, 2, 1)
+        elif self.bbox.xmax>self.img_size[0]:
+            if self.bbox.xmin>self.img_size[0]:
+                aux=copy(self.bbox); aux.xmin-=self.img_size[0]; aux.xmax-=self.img_size[0]
+                aux.xmin=int(aux.xmin);aux.xmax=int(aux.xmax);aux.ymin=int(aux.ymin);aux.ymax=int(aux.ymax)
+                self.bb_msg.append(aux)
+                cv2.rectangle(im_output, (aux.xmin, aux.ymin), (aux.xmax, aux.ymax), color, 2, 1)
+            else:
+                aux=copy(self.bbox); aux.xmin=0; aux.xmax-=self.img_size[0]
+                aux.xmin=int(aux.xmin);aux.xmax=int(aux.xmax);aux.ymin=int(aux.ymin);aux.ymax=int(aux.ymax)
+                self.bb_msg.append(aux)
+                aux2=copy(self.bbox); aux2.xmax=self.img_size[0]
+                aux2.xmin=int(aux2.xmin);aux2.xmax=int(aux2.xmax);aux2.ymin=int(aux2.ymin);aux2.ymax=int(aux2.ymax)
+                self.bb_msg.append(aux2)
+                cv2.rectangle(im_output, (aux.xmin, aux.ymin), (aux.xmax, aux.ymax), color, 2, 1)
+                cv2.rectangle(im_output, (aux2.xmin, aux2.ymin), (aux2.xmax, aux2.ymax), color, 2, 1)
+        else:
+            aux=copy(self.bbox)
+            aux.xmin=int(aux.xmin);aux.xmax=int(aux.xmax);aux.ymin=int(aux.ymin);aux.ymax=int(aux.ymax)
+            self.bb_msg.append(aux)
+            cv2.rectangle(im_output, (self.bbox.xmin, self.bbox.ymin), (self.bbox.xmax, self.bbox.ymax), color, 2, 1)
+
+class FusionTracker(Node):
+    def __init__(self):
+        super().__init__('tracker_node')
+        self.yolo_tracker=Tracker_Base(); self.dasiam_tracker=Tracker_Base()
+        print("Starting initilization.", flush=True)
+        self.declare_parameter("confidence_threshold", 0.5)
+        self.conf_thres = self.get_parameter("confidence_threshold").value
+        self.declare_parameter("iou_threshold", 0.01)
+        self.iou_thres = self.get_parameter("iou_threshold").value
+        self.declare_parameter("agnostic_nms", True)
+        self.agnostic_nms = self.get_parameter("agnostic_nms").value
+        self.declare_parameter("maximum_detections", 30)
+        self.max_det = self.get_parameter("maximum_detections").value
+        self.declare_parameter("line_thickness", 1)
+        self.line_thickness = self.get_parameter("line_thickness").value
+        self.declare_parameter("rate", 10)
+        self.flag_image=False; self.flag_select=False; 
+        self.rate=self.get_parameter("rate").value
+        # Initialize weights 
+        self.declare_parameter("weights", "")
+        weights = "/home/ubuntu/ros_ws/src/image_trackers_ouster/models/best.pt"
+        # Initialize model
+        self.declare_parameter("device", "cuda")
+        self.device = select_device(self.get_parameter("device").value)
+        self.declare_parameter("dnn", True)
+        self.declare_parameter("data", False)
+        self.yolo_tracker.net = DetectMultiBackend(weights, device=self.device, dnn=self.get_parameter("dnn").value, data=self.get_parameter("data").value)
+        self.stride, self.names, self.pt, self.jit, self.onnx, self.engine = (
+            self.yolo_tracker.net.stride,
+            self.yolo_tracker.net.names,
+            self.yolo_tracker.net.pt,
+            self.yolo_tracker.net.jit,
+            self.yolo_tracker.net.onnx,
+            self.yolo_tracker.net.engine,
+        )
+
+        # Setting inference size
+        self.declare_parameter("inference_size_w", 2048)
+        self.declare_parameter("inference_size_h",128)
+        self.img_size = [self.get_parameter("inference_size_w").value, 
+                         self.get_parameter("inference_size_h").value]
+        # self.img_size = check_img_size(self.img_size, s=self.stride)
+        self.yolo_tracker.img_size=self.img_size; self.dasiam_tracker.img_size=self.img_size
+
+        # Half
+        self.declare_parameter("half", False)
+        self.half = self.get_parameter("half").value      
+        self.half &= self.pt and self.device.type != 'cpu'
+
+        if self.pt:
+            self.yolo_tracker.net.half() if self.half else self.yolo_tracker.net.float()
+        else:
+            half = False
+            bs = 1  # export.py models default to batch-size 1
+            self.device = torch.device('cpu')
+        cudnn.benchmark = True  # set True to speed up constant image size inference
+        self.yolo_tracker.net(torch.zeros(1, 4, *self.img_size).to(self.device).type_as(next(self.yolo_tracker.net.parameters())))
+
+        # Set up tracker.
+        params = cv2.TrackerDaSiamRPN_Params()
+        params.backend=cv2.dnn.DNN_BACKEND_CUDA
+        params.target=cv2.dnn.DNN_TARGET_CUDA
+        params.kernel_cls1="/home/ubuntu/ros_ws/src/image_trackers_ouster/models/dasiamrpn_kernel_cls1.onnx"
+        params.kernel_r1="/home/ubuntu/ros_ws/src/image_trackers_ouster/models/dasiamrpn_kernel_r1.onnx"
+        params.model="/home/ubuntu/ros_ws/src/image_trackers_ouster/models/dasiamrpn_model.onnx"
+        self.dasiam_tracker.net=cv2.TrackerDaSiamRPN_create(params)
+        self.augment=100
+        self.declare_parameter("search_time", 2.0)
+        self.search_time=self.get_parameter("search_time").value #Search during 2 seconds before changing mode
+        self.declare_parameter("threshold_tracker", 0.4)
+        self.threshold_tracker=self.get_parameter("threshold_tracker").value #Minimum correlation to consider a detected target as a possible target.
+        self.declare_parameter("select_time", 3.0)
+        self.select_time=self.get_parameter("select_time").value
+        self.declare_parameter("search_augmentation_percentage", 0.1)
+        self.aug_per=self.get_parameter("search_augmentation_percentage").value #More restrictive to re-identify the target during search mode
+        #If the target is lost by YOLO and the covariance of the ekf filter is greater than this value, chanbe to select mode.
+        self.declare_parameter("limit_covariance", 5.0)
+        self.limit_covariance=self.get_parameter("limit_covariance").value 
+
+        # Define the operation modes
+        self.SELECT_TARGET_MODE, self.SEARCH_MODE, self.TRACK_MODE = 0, 1, 2 #Global modes of the detector/tracker
+        self.TRACKER_NORMAL, self.TRACKER_LEFT, self.TRACKER_RIGHT =  0, 1, 2 #Tracker modes for considering that the image is 360 degres.
+        self.operation_mode=self.SELECT_TARGET_MODE
+        self.saved_selection=[]
+        self.search_area=BoundingBox()
+        self.search_area.xmin=0; self.search_area.xmax=self.img_size[0]
+        self.search_area.ymin=0; self.search_area.ymax=self.img_size[1]
+        self.target_covariance=0.0
+        #Time measure
+        self.detect_t=0; self.track_t=0; self.search_t=0
+
+        # start main thread 
+        self.reset_dasiam=False  
+        
+        # Initialize subscriber to Image/CompressedImage topic
+        self.declare_parameter("input_image_topic", "/ouster_merged")
+        input_image_topic = self.get_parameter("input_image_topic").value
+        self.declare_parameter("compressed_image", False)
+        self.compressed_input = self.get_parameter("compressed_image").value
+        if self.compressed_input:
+            self.image_sub = self.create_subscription( CompressedImage,input_image_topic, self.image_callback, 1)
+        else:
+            self.image_sub = self.create_subscription( Image,input_image_topic, self.image_callback, 1)
+
+        self.declare_parameter("search_topic","/tracker_filter/search_area")
+        search_topic=self.get_parameter("search_topic").value
+        self.search_sub=self.create_subscription( BoundingBoxes,search_topic, self.search_area_callback, 1)
+        # Initialize prediction publisher
+        self.declare_parameter("output_topic_dasiamrpn","/tracker/dasiamrpn")
+        self.dasiam_pub = self.create_publisher(BoundingBoxes,self.get_parameter("output_topic_dasiamrpn").value,1)
+        self.declare_parameter("output_topic_yolo","/tracker/yolo")
+        self.yolo_pub = self.create_publisher(BoundingBoxes,self.get_parameter("output_topic_yolo").value,1)
+        
+        # Initialize image publisher
+        self.declare_parameter("output_image_topic","/tracker/image_out")
+        self.image_pub = self.create_publisher(Image,self.get_parameter("output_image_topic").value,10)
+        
+        # Initialize CV_Bridge
+        self.bridge = CvBridge()
+        print("Initilization finished.", flush=True)
+
+    def detectYolo5v (self, im):
+
+        im, im0 = self.preprocess(im)
+        # Run inference
+        im = torch.from_numpy(im).to(self.device)
+        im = im.half() if self.half else im.float()  # uint8 to fp16/32
+        im /= 255  # 0 - 255 to 0.0 - 1.0
+        if len(im.shape) == 3:
+            im = im[None]  # expand for batch dim
+
+        pred = self.yolo_tracker.net(im, augment=False)
+        pred = non_max_suppression(
+            pred, self.conf_thres, self.iou_thres, None, self.agnostic_nms, max_det=self.max_det
+        )
+        
+        # Process predictions 
+        det = pred[0].cpu().numpy()
+
+        bounding_boxes = BoundingBoxes()
+
+
+        for i, det in enumerate(pred):  # per image
+
+            gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
+            
+            if len(det):
+                # Rescale boxes from img_size to im0 size
+                det[:, :4] = scale_boxes(im.shape[2:], det[:, :4], im0.shape).round()
+
+            # Write results
+            cont = 0
+            for *xyxy, conf, cls in reversed(det):
+                
+                bounding_box = BoundingBox()
+                c = int(cls)
+                # Fill in bounding box message
+                bounding_box.predict_class = self.names[c] +" "+str(cont)
+                bounding_box.probability = conf 
+                bounding_box.xmin = int(xyxy[0])
+                bounding_box.ymin = int(xyxy[1])
+                bounding_box.xmax = int(xyxy[2])
+                bounding_box.ymax = int(xyxy[3])
+
+                bounding_boxes.bounding_boxes.append(bounding_box)
+                cont= cont+1
+
+
+        # Publish prediction
+        return bounding_boxes.bounding_boxes
+    
+    def select_mode(self, im):
+        bounding_boxes = self.detectYolo5v(im.copy())
+        now=self.get_clock().now().nanoseconds * 1e-9
+        cv2.rectangle(self.im_output, (int(self.img_size[0]*0.43), -1), (int(self.img_size[0]*0.57), self.img_size[1]+1), (0,155,155), 2, 1)
+        i=0
+        #Delete the old one because it wasn't detected for too much time.
+        while i<len(self.saved_selection):
+            if now-self.saved_selection[i]["time"]>self.saved_selection[i]["count"]+2:
+                del self.saved_selection[i]
+                continue
+            i+=1
+        for bbox in bounding_boxes:
+            # #Select decision
+            ### A person who have been in front of the robot for 3 seconds. ###
+            segment_frame, mask=self.segment_person(im,bbox)
+            descriptor=self.histogramPartsBody(segment_frame, mask)
+            match=False
+            #Filter the persons that aren't at the front or are too far away.
+            if bbox.xmin>self.img_size[0]*0.43 and bbox.xmax<self.img_size[0]*0.57 and  bbox.ymax-bbox.ymin>0.33*self.img_size[1]:
+                for i in range(len(self.saved_selection)):
+                    if self.get_iou(bbox,self.saved_selection[i]["bbox"]) > 0.8:
+                        corr=cv2.compareHist(descriptor,self.saved_selection[i]["descriptor"],cv2.HISTCMP_CORREL)
+                        if  corr>self.threshold_tracker:
+                            match=True
+                            if now-self.saved_selection[i]["time"]>self.saved_selection[i]["count"]+1:
+                                self.saved_selection[i]["count"]+=1
+                                if self.saved_selection[i]["count"]==self.select_time:   
+                                    self.yolo_tracker.bbox=bbox; self.target_descriptor=descriptor 
+                                    self.dasiam_tracker.bbox=bbox        
+                                    self.operation_mode=self.TRACK_MODE; self.tracker_mode=self.TRACKER_NORMAL
+                                    self.tracker_start=self.get_clock().now().nanoseconds * 1e-9
+                                    s,n,r,depth=cv2.split(im)
+                                    frame=cv2.merge([s,n,r])
+                                    self.prev_frame=frame; self.search_start=self.get_clock().now().nanoseconds * 1e-9
+                                    #Change to x,y,(top point)w,h(width,heigth) format for opencv
+                                    self.dasiam_tracker.bbxywh =[bbox.xmin, bbox.ymin, bbox.xmax-bbox.xmin, bbox.ymax-bbox.ymin]
+                                    self.dasiam_tracker.net.init(frame, self.dasiam_tracker.bbxywh)
+                                    #draw bounding box
+                                    self.yolo_tracker.draw_rectangles(self.im_output,(0,0,0))
+                                    self.yolo_tracker.covariance=0.1 #The first detection has low covariance.
+                                    self.saved_selection=[]
+                            break
+            
+                if not match:
+                    thisdict = {"bbox":bbox, "descriptor":descriptor, "time":now, "count":0}
+                    self.saved_selection.append(thisdict)
+
+    def track_yolo(self, im):
+            start=time.clock_gettime_ns(time.CLOCK_THREAD_CPUTIME_ID)
+            best_corr=0
+            bounding_boxes = self.detectYolo5v(im.copy())
+            candidate=None; best_corr2 = 0
+            for bbox in bounding_boxes:
+                iou=self.get_iou(bbox,self.search_area)
+                if iou>0:
+                    segment_frame, mask=self.segment_person(im,bbox)
+                    descriptor=self.histogramPartsBody(segment_frame, mask)
+                    corr=cv2.compareHist(self.target_descriptor,descriptor,cv2.HISTCMP_CORREL)
+                    if corr>self.threshold_tracker:
+                        #Use the percentage of are in the intersection of the bounding boxes.
+                        corr+=iou/2
+                        if corr>best_corr:
+                            best_corr=corr; best_bbox=bbox; best_descriptor=descriptor;
+                    else:
+                        corr+=iou/2
+                        if corr>best_corr2:
+                            candidate=bbox; best_corr2=corr
+            if best_corr>0:
+                self.search_start=self.get_clock().now().nanoseconds * 1e-9; self.tracker_start=self.get_clock().now().nanoseconds * 1e-9
+                #Use the intersection with the previous bounding box to calculate the covariance.
+                #We use the actuar target covariance because a higher covariance in the target will 
+                #produce a higher search area and therefore more desviation.
+                self.yolo_tracker.covariance=self.target_covariance*(1.0-self.get_iou(best_bbox,self.yolo_tracker.bbox))+0.6
+                self.yolo_tracker.bbox=best_bbox
+                self.yolo_tracker.draw_rectangles(self.im_output,(0,0,255))
+                # Update descriptor
+                self.target_descriptor=self.target_descriptor*0.5+best_descriptor*0.5
+                if self.reset_dasiam or ((self.distance_center(self.yolo_tracker.bbox,self.search_area)< self.distance_center(self.dasiam_tracker.bbox,self.search_area)
+                                          and self.get_iou(self.yolo_tracker.bbox,self.dasiam_tracker.bbox)<0.25)):
+                    self.dasiam_tracker.bbox=best_bbox
+                    s,n,r,depth=cv2.split(im)
+                    frame=cv2.merge([s,n,r])
+                    #Change to x,y,(top left point)w,h(width,heigth) format for opencv
+                    self.dasiam_tracker.bbxywh=[best_bbox.xmin, best_bbox.ymin, best_bbox.xmax-best_bbox.xmin, best_bbox.ymax-best_bbox.ymin]
+                    self.dasiam_tracker.net.init(frame, self.dasiam_tracker.bbxywh); self.prev_frame=frame
+                    self.tracker_mode=self.TRACKER_NORMAL; self.reset_dasiam=False
+                elif self.dasiam_tracker.covariance is not None:
+                    iou_trackers=self.get_iou(self.yolo_tracker.bbox,self.dasiam_tracker.bbox)
+                    #Increase the covariance proportionally to the difference between the two trackers.
+                    self.yolo_tracker.covariance*=2-iou_trackers
+                    self.dasiam_tracker.covariance*=2-iou_trackers     
+
+            elif self.get_clock().now().nanoseconds * 1e-9 - self.search_start > self.search_time and candidate is not None:
+                if self.target_covariance<self.limit_covariance:
+                    self.search_start=self.get_clock().now().nanoseconds * 1e-9; self.tracker_start=self.get_clock().now().nanoseconds * 1e-9
+                    self.yolo_tracker.covariance=self.target_covariance*(1.0-self.get_iou(candidate,self.yolo_tracker.bbox))+0.6
+                    self.yolo_tracker.bbox=candidate
+                    self.yolo_tracker.draw_rectangles(self.im_output,(0,0,255))
+                    # New descriptor
+                    segment_frame, mask=self.segment_person(im,candidate)
+                    self.target_descriptor=self.histogramPartsBody(segment_frame, mask)
+                else:
+                    #Select mode
+                    self.operation_mode=self.SELECT_TARGET_MODE
+            end=time.clock_gettime_ns(time.CLOCK_THREAD_CPUTIME_ID)  
+            self.detect_t=end-start if self.detect_t==0 else (self.detect_t+end-start)/2
+
+
+    def track_dasiam(self, im,):
+        start=time.clock_gettime_ns(time.CLOCK_THREAD_CPUTIME_ID)     
+        s,n,r,depth=cv2.split(im)
+        frame=cv2.merge([s,n,r])
+        copy_frame=frame.copy()
+        # Taking account that the image is 360 degrees.
+        search_area=copy(self.search_area)
+        if self.dasiam_tracker.bbox.xmin<self.augment:
+            copy_frame[:,:self.augment]=frame[:,-self.augment:]
+            copy_frame[:,self.augment:]=frame[:,:-self.augment]
+            search_area.xmin+=self.augment; search_area.xmax+=self.augment
+            if self.tracker_mode!=self.TRACKER_LEFT:
+                prev_copy=self.prev_frame.copy()
+                prev_copy[:,:self.augment]=self.prev_frame[:,-self.augment:]
+                prev_copy[:,self.augment:]=self.prev_frame[:,:-self.augment]
+                self.dasiam_tracker.bbxywh[0]+=self.augment
+                self.dasiam_tracker.net.init(prev_copy,self.dasiam_tracker.bbxywh)
+            self.tracker_mode=self.TRACKER_LEFT
+
+        elif self.dasiam_tracker.bbox.xmax>self.img_size[0]-self.augment:
+            copy_frame[:,-self.augment:]=frame[:,:self.augment]
+            copy_frame[:,:-self.augment]=frame[:,self.augment:]
+            search_area.xmin-=self.augment; search_area.xmax-=self.augment
+            if self.tracker_mode!=self.TRACKER_RIGHT:
+                prev_copy=self.prev_frame.copy()
+                prev_copy[:,-self.augment:]=self.prev_frame[:,:self.augment]
+                prev_copy[:,:-self.augment]=self.prev_frame[:,self.augment:]
+                self.dasiam_tracker.bbxywh[0]-=self.augment
+                self.dasiam_tracker.net.init(prev_copy,self.dasiam_tracker.bbxywh)   
+            self.tracker_mode=self.TRACKER_RIGHT
+
+        elif self.tracker_mode!=self.TRACKER_NORMAL:
+            self.tracker_mode=self.TRACKER_NORMAL
+            self.dasiam_tracker.net.init(self.prev_frame,self.dasiam_tracker.bbxywh)
+
+        ok, self.dasiam_tracker.bbxywh = self.dasiam_tracker.net.update(copy_frame)
+        self.dasiam_tracker.bbxywh=list(self.dasiam_tracker.bbxywh)
+
+        # Bounding box in the original image
+        if self.tracker_mode==self.TRACKER_LEFT: self.dasiam_tracker.bbxywh[0]-=self.augment
+        elif self.tracker_mode==self.TRACKER_RIGHT: self.dasiam_tracker.bbxywh[0]+=self.augment
+
+        # Change the side of the image if necessary
+        if self.dasiam_tracker.bbxywh[0]+self.dasiam_tracker.bbxywh[2]/2<0: self.dasiam_tracker.bbxywh[0]+=2048
+        elif self.dasiam_tracker.bbxywh[0]+self.dasiam_tracker.bbxywh[2]/2>self.img_size[0]: self.dasiam_tracker.bbxywh[0]-=self.img_size[0]
+
+        #Change to x,y,(top left point) x,y (bottom right point)
+        prev_bbox=copy(self.dasiam_tracker.bbox)
+        self.dasiam_tracker.bbox.xmin=self.dasiam_tracker.bbxywh[0]; self.dasiam_tracker.bbox.ymin=self.dasiam_tracker.bbxywh[1]
+        self.dasiam_tracker.bbox.xmax=self.dasiam_tracker.bbxywh[0]+self.dasiam_tracker.bbxywh[2]; 
+        self.dasiam_tracker.bbox.ymax=self.dasiam_tracker.bbxywh[1]+self.dasiam_tracker.bbxywh[3]
+
+        #Possible lost the target, update with Yolo if possible
+        if self.get_iou(self.dasiam_tracker.bbox,search_area)==0: self.reset_dasiam=True
+
+
+        # Draw bounding box
+        self.prev_frame=frame
+        self.dasiam_tracker.draw_rectangles(self.im_output)
+        self.dasiam_tracker.covariance=self.target_covariance*(1.0-self.get_iou(prev_bbox,self.dasiam_tracker.bbox))+0.6
+        
+        end=time.clock_gettime_ns(time.CLOCK_THREAD_CPUTIME_ID)
+        self.track_t=end-start if self.track_t==0 else (self.track_t+end-start)/2
+               
+
+    def image_callback(self, data):
+        self.data = data
+        if self.compressed_input:
+            self.im = self.bridge.compressed_imgmsg_to_cv2(data, desired_encoding="bgra8")
+        else:
+            self.im = self.bridge.imgmsg_to_cv2(data, desired_encoding="bgra8")
+        self.flag_image=True
+
+    def search_area_callback(self, data):
+        self.search_area = data.bounding_boxes[0]
+        #We use the 'probability' field to pass the covariance.
+        self.target_covariance=data.bounding_boxes[0].probability
+        
+
+    def preprocess(self, img):
+        """
+        Adapted from yolov5/utils/datasets.py LoadStreams class
+        """
+        img0 = img.copy()             
+        img = letterbox(img0, 2048, stride=self.stride, auto=True)[0]
+        # Convert
+        img = img.transpose((2, 0, 1))[::-1]
+        img = np.ascontiguousarray(img)
+
+        return img, img0 
+
+    def segment_person(self, frame, bbox):
+        segment_frame=frame[bbox.ymin:bbox.ymax, bbox.xmin:bbox.xmax]
+        shape = np.shape(segment_frame)
+        #Interior median depth
+        depth=[]
+        for i in range(int(shape[0]*0.3), int(shape[0]*0.7)):
+            for j in range(int(shape[1]*0.3), int(shape[1]*0.7)):
+                depth.append(segment_frame[i,j,3])
+        depth.sort()
+        if len(depth)==0: return segment_frame,None
+
+        if len(depth)==1: median=depth[0]
+        elif len(depth)%2==0:
+            median=(depth[int(len(depth)/2)] + depth[int(len(depth)/2)+1])/2
+        else:
+            median=depth[int(len(depth)/2)]
+
+        #Segment using depth
+        mask=np.zeros(shape[:2], dtype="uint8")
+        for i in range(shape[0]):
+            for j in range(shape[1]):
+                if segment_frame[i,j,3]==median: 
+                    mask[i,j]=255
+
+        return segment_frame, mask
+    
+    def histogramPartsBody(self, segment_frame, mask):
+        #Divide the person in 5 equal parts
+        shape = np.shape(segment_frame)
+        descriptor=[]
+        part_mask=None
+        for i in range(1,5):
+            part_frame = segment_frame[int(0.2*i*shape[0]):int(0.2*(i+1)*shape[0])]
+            if mask is not None:
+                part_mask = mask[int(0.2*i*shape[0]):int(0.2*(i+1)*shape[0])]
+            for channel in range(3):
+                hist=cv2.calcHist([part_frame], [channel], histSize=[64], mask=part_mask, ranges=[0,256])
+                cv2.normalize(hist,hist,0.0,1.0,cv2.NORM_MINMAX,dtype=cv2.CV_32F)
+                descriptor.append(hist)
+        descriptor=np.array(descriptor); descriptor=descriptor.flatten()
+        return descriptor
+    
+
+    def get_iou(self, bb1, bb2):
+        """
+        Calculate the Intersection over Union (IoU) of two bounding boxes.
+        The second bbox can be outside the limits, considering the 360 degrees.
+        """
+        outside_limits=False
+        bb2=copy(bb2)
+        if(bb2.xmax>self.img_size[0] and bb2.xmin<0):
+            return (bb1.xmax - bb1.xmin) * (bb1.ymax - bb1.ymin) / (self.img_size[0]*self.img_size[1])
+        elif(bb2.xmax>self.img_size[0]):
+            outside_limits=True
+            bb3=copy(bb2); bb3.xmin=0; bb3.xmax=bb2.xmax-self.img_size[0]
+            bb2.xmax=self.img_size[0]
+        elif(bb2.xmin<0):
+            outside_limits=True
+            bb3=copy(bb2); bb3.xmin=self.img_size[0]+bb2.xmin; bb3.xmax=self.img_size[0]
+            bb2.xmin=0
+
+        if outside_limits:
+            x_left = max(bb1.xmin, bb2.xmin)
+            y_top = max(bb1.ymin, bb2.ymin)
+            x_right = min(bb1.xmax, bb2.xmax)
+            y_bottom = min(bb1.ymax, bb2.ymax)
+            intersection_area=0
+            if x_right > x_left and y_bottom > y_top:
+                intersection_area+=(x_right - x_left) * (y_bottom - y_top)
+
+            x_left = max(bb1.xmin, bb3.xmin)
+            y_top = max(bb1.ymin, bb3.ymin)
+            x_right = min(bb1.xmax, bb3.xmax)
+            y_bottom = min(bb1.ymax, bb3.ymax)
+            if x_right > x_left and y_bottom > y_top:
+                intersection_area+=(x_right - x_left) * (y_bottom - y_top)
+
+            # compute the area of both AABBs
+            bb1_area = (bb1.xmax - bb1.xmin) * (bb1.ymax - bb1.ymin)
+            bb2_area = (bb2.xmax - bb2.xmin) * (bb2.ymax - bb2.ymin)
+            bb3_area = (bb3.xmax - bb3.xmin) * (bb3.ymax - bb3.ymin)
+            # compute the intersection over union by taking the intersection
+            # area and dividing it by the areas - the interesection area
+            iou = intersection_area / float(bb1_area + bb2_area + bb3_area - intersection_area)
+            assert iou >= 0.0
+            assert iou <= 1.0
+            return iou
+        
+        else:
+            # determine the coordinates of the intersection rectangle
+            x_left = max(bb1.xmin, bb2.xmin)
+            y_top = max(bb1.ymin, bb2.ymin)
+            x_right = min(bb1.xmax, bb2.xmax)
+            y_bottom = min(bb1.ymax, bb2.ymax)
+
+            if x_right < x_left or y_bottom < y_top:
+                return 0.0
+            # The intersection of two axis-aligned bounding boxes is always an
+            # axis-aligned bounding box
+            intersection_area = (x_right - x_left) * (y_bottom - y_top)
+
+            # compute the area of both AABBs
+            bb1_area = (bb1.xmax - bb1.xmin) * (bb1.ymax - bb1.ymin)
+            bb2_area = (bb2.xmax - bb2.xmin) * (bb2.ymax - bb2.ymin)
+
+            # compute the intersection over union by taking the intersection
+            # area and dividing it by the areas - the interesection area
+            iou = intersection_area / float(bb1_area + bb2_area - intersection_area)
+            assert iou >= 0.0
+            assert iou <= 1.0
+            return iou
+    
+    def distance_center(self, bbox1, bbox2):
+        return np.sqrt(((bbox1.xmin+(bbox1.xmax-bbox1.xmin)/2)-(bbox2.xmin+(bbox2.xmax-bbox2.xmin)/2))**2+((bbox1.ymin+(bbox1.ymax-bbox1.ymin)/2)-(bbox2.ymin+(bbox2.ymax-bbox2.ymin)/2))**2)
+
+def main_thread(node: FusionTracker):
+    if node.flag_select: node.operation_mode=node.SELECT_TARGET_MODE; node.flag_select=False
+    if node.flag_image:
+        node.yolo_tracker.bb_msg=[]; node.dasiam_tracker.bb_msg=[]
+        node.flag_image=False
+        node.im_output=node.im.copy()
+        if node.operation_mode==node.SELECT_TARGET_MODE: node.select_mode(node.im.copy())
+        elif node.operation_mode==node.TRACK_MODE: 
+            node.track_dasiam(node.im.copy())
+            node.track_yolo(node.im.copy())
+
+        #Publish messages
+        bounding_boxes_dasiam = BoundingBoxes()
+        bounding_boxes_dasiam.header = node.data.header
+        bounding_boxes_dasiam.image_header = node.data.header
+        for bbox in node.dasiam_tracker.bb_msg:
+            #We use the 'probability' field to pass the covariance.
+            bbox.probability=node.dasiam_tracker.covariance
+            bounding_boxes_dasiam.bounding_boxes.append(bbox) #Append the bounding boxes which are between the limits of the image.
+        node.dasiam_pub.publish(bounding_boxes_dasiam)
+
+        bounding_boxes_yolo = BoundingBoxes()
+        bounding_boxes_yolo.header = node.data.header
+        bounding_boxes_yolo.image_header = node.data.header
+        for bbox in node.yolo_tracker.bb_msg:
+            #We use the 'probability' field to pass the covariance.
+            bbox.probability=node.yolo_tracker.covariance
+            bounding_boxes_yolo.bounding_boxes.append(bbox) #Append the bounding boxes which are between the limits of the image.
+        node.yolo_pub.publish(bounding_boxes_yolo)
+        cv2.rectangle(node.im_output,(node.search_area.xmin,node.search_area.ymin),(node.search_area.xmax,node.search_area.ymax), (255,255,0),2,1)
+        node.image_pub.publish(cv2_to_imgmsg(node.im_output, "bgra8")) 
+
+# A dependency problem with cv_bridge that uses deprecated tostring()
+def cv2_to_imgmsg(cv_image, encoding):
+    img_msg = Image()
+    img_msg.height = cv_image.shape[0]
+    img_msg.width = cv_image.shape[1]
+    img_msg.encoding = encoding
+    img_msg.is_bigendian = 0
+    img_msg.data = cv_image.tobytes()
+    img_msg.step = len(img_msg.data) // img_msg.height # That double line is actually integer division, not a comment
+    return img_msg
+
+def main(args=None):
+    check_requirements(exclude=("tensorboard", "thop", "opencv-python"))
+    
+
+    rclpy.init(args=args)
+    tracker_node = FusionTracker() 
+   
+    try:
+        while rclpy.ok():
+            rclpy.spin_once(tracker_node,timeout_sec=1/tracker_node.rate)
+            main_thread(tracker_node)
+    except KeyboardInterrupt:
+        pass
+    tracker_node.destroy_node()
+    rclpy.shutdown()

@@ -1,0 +1,59 @@
+<launch>
+    <!-- Detection configuration -->
+    <arg name="confidence_threshold"  default="0.5"/>
+    <arg name="iou_threshold"         default="0.01"/>
+    <arg name="maximum_detections"    default="30"/>
+    <arg name="device"                default="cuda:0"/>
+    <arg name="agnostic_nms"          default="true"/>
+    <arg name="line_thickness"        default="1"/>
+    <arg name="dnn"                   default="true"/>
+    <arg name="half"                  default="false"/>
+
+    <!-- Tracker configuration -->
+    <arg name="search_time"           default="7.0"/>
+    <arg name="threshold_tracker"     default="0.65"/>
+    <arg name="limit_covariance"      default="5.0"/>
+    <arg name="select_time"           default="1.0"/>
+    
+    <!-- replace imgsz -->
+    <arg name="inference_size_h"      default="128"/>
+    <arg name="inference_size_w"      default="2048"/>
+
+    <!-- ROS topics -->
+    <arg name="input_image_topic"       default="/ouster_merged"/>
+    <arg name="compressed_image"       default="false"/>
+    <arg name="search_topic"           default="/tracker_filter/search_area"/>
+    <arg name="output_topic_yolo"               default="/tracker/yolo"/>
+    <arg name="output_topic_dasiamrpn"          default="/tracker/dasiamrpn"/>
+
+    <!-- Topic annotated image -->
+    <arg name="output_image_topic"      default="/tracker/image_out"/>
+
+    <node pkg="image_trackers_ouster" name="tracker" exec="tracker" output="screen">
+        <param name="confidence_threshold"  value="$(var confidence_threshold)"/>
+        <param name="iou_threshold"         value="$(var iou_threshold)" />
+        <param name="maximum_detections"    value="$(var maximum_detections)"/>
+        <param name="device"                value="$(var device)" />
+        <param name="agnostic_nms"          value="$(var agnostic_nms)" />
+        <param name="line_thickness"        value="$(var line_thickness)"/>
+        <param name="dnn"                   value="$(var dnn)"/>
+        <param name="half"                  value="$(var half)"/>
+
+        <param name="inference_size_h"      value="$(var inference_size_h)"/>
+        <param name="inference_size_w"      value="$(var inference_size_w)"/>
+
+        <param name="input_image_topic"         value="$(var input_image_topic)"/>
+        <param name="compressed_image"          value="$(var compressed_image)"/>
+        <param name="output_topic_yolo"         value="$(var output_topic_yolo)"/>
+        <param name="output_topic_dasiamrpn"    value="$(var output_topic_dasiamrpn)"/>
+        <param name="search_topic"              value="$(var search_topic)"/>
+
+        <param name="output_image_topic"    value="$(var output_image_topic)"/>
+
+        <param name="search_time"           value="$(var search_time)"/>
+        <param name="threshold_tracker"     value="$(var threshold_tracker)"/>
+        <param name="limit_covariance"      value="$(var limit_covariance)"/>
+        <param name="select_time"           value="$(var select_time)"/>
+    </node>
+
+</launch>

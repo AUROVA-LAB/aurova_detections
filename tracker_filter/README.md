@@ -1,0 +1,3 @@
+# Tracker fusion with an Extended Kalman Filter
+
+This package reads the image from the topic `/ouster/range_image` and the predictions of the trackers from the topics `/tracker/yolo`, `/tracker/dasiamrpn` and `/m2track` to estimate the current position of the targetin the 3D space, publishing it in `/target`. It also publish a search area to coordinate the trackers in the topic `/tracker_filter/search_area` and the point cloud without the target in `/ouster_filtered`, which is used by the [local planner](https://github.com/AUROVA-LAB/aurova_planning) to follow the target. Pressing the key **s**, the EKF is reset for selecting a new target. 
